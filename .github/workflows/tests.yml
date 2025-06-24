@@ -21,7 +21,7 @@ jobs:
           python-version: '3.11'
           cache: 'poetry'
       - name: Install deps
-        run: poetry install
+        run: poetry install --no-root
       - name: Run lint check
         run: poetry run pre-commit run -a ${{ matrix.cmd }}
   pytest:
