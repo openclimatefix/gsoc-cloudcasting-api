@@ -1,138 +1,166 @@
-# --- PROJECT CONFIGURATION --- #
-
-[build-system]
-requires = ["setuptools>=67", "wheel", "setuptools-git-versioning>=2.0,<3"]
-build-backend = "setuptools.build_meta"
-
-# Metadata (see https://peps.python.org/pep-0621/)
-[project]
-name = "ocf-template"
-dynamic = ["version"] # Set automtically using git: https://setuptools-git-versioning.readthedocs.io/en/stable/
-description = "Consise summary of project"
-readme = {file = "README.md", content-type = "text/markdown"}
-requires-python = ">=3.12.0"
-license = {text = "MIT License"}
+[tool.poetry]
+name = "cloudcasting_backend"
+version = "0.1.0"
+description = ""
 authors = [
-    { name = "Open Climate Fix Team", email = "info@openclimatefix.org"}
+
 ]
-classifiers = [
-    "Programming Language :: Python :: 3",
-    "License :: OSI Approved :: MIT License",
+maintainers = [
+
 ]
-dependencies = [
-    "loguru >= 0.7.3",
-    "numpy >= 1.23.2",
-]
+readme = "README.md"
 
-[dependency-groups]
-dev = [
-    # Testing
-    "pytest",
-    "unittest-xml-reporting",
-    # Linting and type checking
-    "mypy",
-    "ruff >= 0.9.2",
-    # LSP Support
-    "python-lsp-server",
-    "pylsp-mypy",
-    "python-lsp-ruff",
-]
+[tool.poetry.dependencies]
+python = ">3.9.1,<4"
+fastapi = "^0.115.6"
+uvicorn = { version = "^0.34.0", extras = ["standard"] }
+pydantic = "^2.10.4"
+pydantic-settings = "^2.7.0"
+yarl = "^1.18.3"
+ujson = "^5.10.0"
+httptools = "^0.6.4"
+pymongo = "^4.10.1"
+sentry-sdk = "^2.19.2"
+opentelemetry-api = "^1.29.0"
+opentelemetry-sdk = "^1.29.0"
+opentelemetry-exporter-otlp = "^1.29.0"
+opentelemetry-instrumentation = "^0.50b0"
+opentelemetry-instrumentation-fastapi = "^0.50b0"
+loguru = "^0.7.3"
+boto3 = "^1.38.41"
 
-[project.scripts]
-# Put entrypoints in here
-ocf-template-cli = "ocf_template.main:main"
 
-[project.urls]
-repository = "https://github.com/openclimatefix/ocf-template"
+[tool.poetry.group.dev.dependencies]
+pytest = "^8"
+ruff = "^0.5.0"
+mypy = "^1.10.1"
+pre-commit = "^3.7.1"
+black = "^24.4.2"
+pytest-cov = "^5"
+anyio = "^4"
+pytest-env = "^1.1.3"
+httpx = "^0.27.0"
 
-[tool.setuptools]
-include-package-data = false
-license-files = [] # https://github.com/astral-sh/uv/issues/9513#issuecomment-2519527822
+[tool.isort]
+profile = "black"
+multi_line_output = 3
+src_paths = ["cloudcasting_backend",]
 
-[tool.setuptools-git-versioning]
-enabled = true
-
-# --- LINTING AND TYPING CONFIGURATION --- #
-
-# MyPy configuration
-# * See https://mypy.readthedocs.io/en/stable/index.html
 [tool.mypy]
-python_version = "3.12"
-dmypy = true
 strict = true
-warn_unreachable = true
-warn_return_any = true
-disallow_untyped_defs = true
-plugins = [
-    "numpy.typing.mypy_plugin",
-]
-
-[[tool.mypy.overrides]]
-# Ignore missing imports for libraries that don't have them.
-# If they are ever made, remove from here!
-module = [
-    "fsspec",
-    "s3fs",
-    "zarr",
-]
 ignore_missing_imports = true
+allow_subclassing_any = true
+allow_untyped_calls = true
+pretty = true
+show_error_codes = true
+implicit_reexport = true
+allow_untyped_decorators = true
+warn_unused_ignores = false
+warn_return_any = false
+namespace_packages = true
 
+[tool.pytest.ini_options]
+filterwarnings = [
+    "error",
+    "ignore::DeprecationWarning",
+    "ignore:.*unclosed.*:ResourceWarning",
+]
+env = [
+    "CLOUDCASTING_BACKEND_ENVIRONMENT=pytest",
+    "CLOUDCASTING_BACKEND_DB_BASE=cloudcasting_backend_test",
+    "CLOUDCASTING_BACKEND_SENTRY_DSN=",
+]
 
-# Ruff configuration
-# * See https://beta.ruff.rs/docs/
 [tool.ruff]
-line-length = 100
-indent-width = 4
-exclude = ["__init__.py"]
-
-[tool.ruff.lint]
-select = [
-    "F",   # pyflakes
-    "E",   # pycodestyle
-    "W",   # whitespace and newlines
-    "I",   # isort
-    "UP",  # modernize
-    "ANN", # flake8 type annotations
-    "S",   # flake8 bandit
-    "B",   # flake8 bugbear
-    "C4",  # flake8 comprehensions
-    "COM", # flake8 commas
-    "T20", # flake8 print
-    "SIM", # flake8 simplify
-    "ARG", # flake8 unused arguments
-    "DTZ", # flake8 datetimes
-    "Q",   # flake8 quotes
-    "TCH", # flake8 typecheck
-    "D",   # pydocstyle
-    "RUF", # ruff-specific rules
+# List of enabled rulsets.
+# See https://docs.astral.sh/ruff/rules/ for more information.
+lint.select = [
+    "E",   # Error
+    "F",   # Pyflakes
+    "W",   # Pycodestyle
+    "C90", # McCabe complexity
+    "I",   # Isort
+    "N",   # pep8-naming
+    "D",   # Pydocstyle
+    "ANN", # Pytype annotations
+    "S",   # Bandit
+    "B",   # Bugbear
+    "COM", # Commas
+    "C4",  # Comprehensions
+    "ISC", # Implicit string concat
+    "PIE", # Unnecessary code
+    "T20", # Catch prints
+    "PYI", # validate pyi files
+    "Q",   # Checks for quotes
+    "RSE", # Checks raise statements
+    "RET", # Checks return statements
+    "SLF", # Self checks
+    "SIM", # Simplificator
+    "PTH", # Pathlib checks
+    "ERA", # Checks for commented out code
+    "PL",  # PyLint checks
+    "RUF", # Specific to Ruff checks
 ]
-fixable = ["ALL"]
-ignore = [
-    "D203", "D213", "D215", "D400", "D401", "D404", "D406",
-    "D407", "D408", "D409", "D413",
+lint.ignore = [
+    "D105",    # Missing docstring in magic method
+    "D107",    # Missing docstring in __init__
+    "B008",    # Do not perform function calls in argument defaults
+    "D211",    # No blank lines allowed before class docstring
+    "D212",    # Multi-line docstring summary should start at the first line
+    "D401",    # First line should be in imperative mood
+    "D104",    # Missing docstring in public package
+    "D100",    # Missing docstring in public module
+    "D202",    # No blank lines allowed after function docstring
+    "ANN102",  # Missing type annotation for self in method
+    "ANN101",  # Missing type annotation for argument
+    "ANN401",  # typing.Any are disallowed in `**kwargs
+    "PLR0913", # Too many arguments for function call
+    "D106",    # Missing docstring in public nested class
 ]
+exclude = [
+    ".venv/"
+]
+lint.mccabe = { max-complexity = 10 }
+line-length = 88
 
 [tool.ruff.lint.per-file-ignores]
-"test*" = ["D", "ANN"]
+"tests/*" = [
+    "S101", # Use of assert detected
+]
 
 [tool.ruff.lint.pydocstyle]
-convention = "google"
+convention = "pep257"
+ignore-decorators = ["typing.overload"]
 
-[tool.ruff.format]
-quote-style = "double"
-indent-style = "space"
-line-ending = "auto"
-docstring-code-format = true
-docstring-code-line-length = 100
+[tool.ruff.lint.pylint]
+allow-magic-value-types = ["int", "str", "float", "bytes"]
 
-# --- DOCUMENTATION CONFIGURATION --- #
 
-[tool.pydoctor]
-add-package = ["src/ocf-python-project"]
-project-base-dir = "src/ocf-python-project"
-docformat = "google"
-html-output = "docs"
-theme = "classic"
-privacy = [
-    "HIDDEN:**.test_*",
-]
+[fastapi-template.options]
+project_name = "cloudcasting_backend"
+api_type = "rest"
+enable_redis = "None"
+enable_rmq = "None"
+ci_type = "github"
+enable_migrations = "None"
+enable_taskiq = "None"
+enable_kube = "None"
+kube_name = "cloudcasting-backend"
+enable_routers = "True"
+enable_kafka = "None"
+enable_loguru = "True"
+traefik_labels = "None"
+add_dummy = "None"
+orm = "none"
+self_hosted_swagger = "None"
+prometheus_enabled = "None"
+sentry_enabled = "True"
+otlp_enabled = "True"
+gunicorn = "None"
+add_users = "None"
+cookie_auth = "None"
+jwt_auth = "None"
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"

@@ -1,0 +1,13 @@
+services:
+  api: &main_app
+    build:
+      context: .
+      dockerfile: ./Dockerfile
+    image: cloudcasting_backend:${CLOUDCASTING_BACKEND_VERSION:-latest}
+    restart: always
+    env_file:
+      - .env
+    environment:
+      CLOUDCASTING_BACKEND_HOST: 0.0.0.0
+
+
