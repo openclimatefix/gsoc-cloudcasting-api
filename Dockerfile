@@ -14,12 +14,16 @@ WORKDIR /app/src
 # Installing requirements
 RUN --mount=type=cache,target=/tmp/poetry_cache poetry install --only main
 
-# Copying actuall application
+# Copying actual application
 COPY . /app/src/
-RUN --mount=type=cache,target=/tmp/poetry_cache poetry install --only main
+RUN --mount=type=cache,target=/tmp/poetry_cache poetry install --only main --no-root
+
+# Install the package in development mode
+RUN pip install -e .
 
 CMD ["/usr/local/bin/python", "-m", "cloudcasting_backend"]
 
 FROM prod AS dev
 
 RUN --mount=type=cache,target=/tmp/poetry_cache poetry install
+RUN pip install -e .

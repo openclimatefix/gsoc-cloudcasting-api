@@ -1,6 +1,8 @@
 import logging
 from importlib import metadata
 from pathlib import Path
+import os
+import tomli
 
 import sentry_sdk
 from fastapi import FastAPI
@@ -40,9 +42,20 @@ def get_app() -> FastAPI:
                 ),
             ],
         )
+    try:
+        version = metadata.version("cloudcasting_backend")
+    except metadata.PackageNotFoundError:
+        pyproject_path = Path(__file__).parent.parent.parent / "pyproject.toml"
+        if pyproject_path.exists():
+            with open(pyproject_path, "rb") as f:
+                pyproject_data = tomli.load(f)
+                version = pyproject_data["tool"]["poetry"]["version"]
+        else:
+            version = "0.1.0"
+
     app = FastAPI(
         title="cloudcasting_backend",
-        version=metadata.version("cloudcasting_backend"),
+        version=version,
         lifespan=lifespan_setup,
         docs_url="/api/docs",
         redoc_url="/api/redoc",
