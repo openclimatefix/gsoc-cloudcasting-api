@@ -56,6 +56,9 @@ class Settings(BaseSettings):
 
     # Path to store downloaded zarr files
     zarr_storage_path: str = "cloudcasting_backend/static/zarr_files"
+    
+    # Path to store converted GeoTIFF layers
+    geotiff_storage_path: str = "cloudcasting_backend/static/layers"
 
     model_config = SettingsConfigDict(
         env_file=".env",
