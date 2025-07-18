@@ -5,11 +5,12 @@ followed by conversion of the downloaded Zarr data to GeoTIFF format.
 
 import datetime
 import os
+import re
 import threading
 import time
 from functools import wraps
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable, Optional, Dict, Any
 
 import boto3
 import numpy as np
@@ -45,9 +46,11 @@ def save_to_geotiff(filename: str, data: np.ndarray, lat_grid: np.ndarray, lon_g
         nodata: Value to represent no data.
     """
     height, width = data.shape
+    # Get bounds from the target grid, which is already cropped
     lon_min, lon_max = np.min(lon_grid), np.max(lon_grid)
     lat_min, lat_max = np.min(lat_grid), np.max(lat_grid)
 
+    # from_bounds expects: west, south, east, north
     transform = from_bounds(lon_min, lat_min, lon_max, lat_max, width, height)
 
     try:
@@ -69,10 +72,91 @@ def save_to_geotiff(filename: str, data: np.ndarray, lat_grid: np.ndarray, lon_g
         log.opt(exception=e).error(f"Failed to save GeoTIFF file: {filename}")
 
 
+def parse_orbital_parameters(orbital_params_str: str) -> Dict[str, Any]:
+    """
+    Parse the orbital parameters string from Zarr attributes.
+
+    Args:
+        orbital_params_str: The multi-line string from metadata.
+
+    Returns:
+        A dictionary of parameter values.
+    """
+    params = {}
+    for line in orbital_params_str.strip().split('\n'):
+        if ':' in line:
+            key, value = line.split(':', 1)
+            try:
+                params[key.strip()] = float(value.strip())
+            except ValueError:
+                params[key.strip()] = value.strip()
+    return params
+
+
+def extract_satellite_info(ds: xr.Dataset) -> Dict[str, float]:
+    """
+    Extract satellite position information from the Zarr dataset attributes.
+    This function checks for Meteosat-10/11 specifically and has fallbacks.
+
+    Args:
+        ds: The opened xarray Dataset.
+
+    Returns:
+        Dictionary with satellite parameters {'longitude': float, 'height': float}.
+    """
+    # Default values set to Meteosat-11 parameters
+    satellite_info = {'longitude': 9.6, 'height': 35785831.0}
+    platform_name = "Unknown"
+
+    # Calibration values for Meteosat-10 and Meteosat-11
+    METEOSAT_10_LONGITUDE = 0.0
+    METEOSAT_11_LONGITUDE = 9.5
+    SATELLITE_HEIGHT = 35785831.0
+
+    if hasattr(ds, 'sat_pred') and hasattr(ds.sat_pred, 'attrs'):
+        attrs = ds.sat_pred.attrs
+        if 'platform_name' in attrs:
+            platform_name = attrs['platform_name']
+            log.info(f"📡 Detected satellite platform: {platform_name}")
+
+            if "Meteosat-10" in platform_name:
+                satellite_info['longitude'] = METEOSAT_10_LONGITUDE
+                satellite_info['height'] = SATELLITE_HEIGHT
+                log.info("Using hard-coded parameters for Meteosat-10.")
+            elif "Meteosat-11" in platform_name:
+                satellite_info['longitude'] = METEOSAT_11_LONGITUDE
+                satellite_info['height'] = SATELLITE_HEIGHT
+                log.info("Using hard-coded parameters for Meteosat-11.")
+            else:
+                log.warning(f"Platform '{platform_name}' not specifically handled. Attempting fallback attribute search.")
+                # Fallback for other satellites by parsing attributes
+                if 'orbital_parameters' in attrs:
+                    orbital_params = parse_orbital_parameters(attrs['orbital_parameters'])
+                    if 'satellite_actual_longitude' in orbital_params:
+                        satellite_info['longitude'] = orbital_params['satellite_actual_longitude']
+                    if 'satellite_actual_altitude' in orbital_params:
+                        satellite_info['height'] = orbital_params['satellite_actual_altitude']
+                elif 'area' in attrs:
+                    area_str = attrs['area']
+                    lon_match = re.search(r'lon_0:\s*([\d.-]+)', area_str)
+                    if lon_match:
+                        satellite_info['longitude'] = float(lon_match.group(1))
+                    h_match = re.search(r'h:\s*([\d.-]+)', area_str)
+                    if h_match:
+                        satellite_info['height'] = float(h_match.group(1))
+
+    log.info(f"Using projection parameters for {platform_name}: "
+             f"Longitude={satellite_info['longitude']}°, Height={satellite_info['height']}m")
+    return satellite_info
+
+
 def convert_zarr_to_geotiffs(zarr_path: str, output_dir: str) -> None:
     """
     Load a cloud dataset from Zarr, iterate through all variables and steps,
-    and save each slice as a cropped GeoTIFF file.
+    and save each slice as a cropped and reprojected GeoTIFF file.
+
+    This function dynamically determines the satellite projection based on Zarr
+    metadata, supporting platforms like Meteosat-10 and Meteosat-11.
 
     Args:
         zarr_path: Path to the root of the downloaded Zarr dataset.
@@ -89,20 +173,29 @@ def convert_zarr_to_geotiffs(zarr_path: str, output_dir: str) -> None:
         log.opt(exception=e).error(f"Failed to open Zarr dataset at {zarr_path}")
         return
 
-    # --- 1. Pre-calculate projections and grids (these are constant for all layers) ---
-    log.info("Preparing coordinate transformation...")
+    # --- 1. Extract Satellite Info & Pre-calculate transformations ---
+    satellite_info = extract_satellite_info(ds)
+
     x_coords = ds.x_geostationary.values
     y_coords = ds.y_geostationary.values
     x_mesh, y_mesh = np.meshgrid(x_coords, y_coords)
 
-    geos_proj = pyproj.Proj(proj='geos', h=35785831, lon_0=9.6, sweep='y')
+    geos_proj = pyproj.Proj(
+        proj='geos',
+        h=satellite_info['height'],
+        lon_0=satellite_info['longitude'],
+        sweep='y'
+    )
     wgs84_proj = pyproj.Proj(proj='latlong', datum='WGS84')
     transformer = pyproj.Transformer.from_proj(geos_proj, wgs84_proj, always_xy=True)
+
+    # Perform the expensive coordinate transformation once
     lon_grid, lat_grid = transformer.transform(x_mesh, y_mesh)
 
-    mask = ~np.isnan(ds.sat_pred.isel(init_time=0, step=0, variable=0).values) & np.isfinite(lon_grid) & np.isfinite(lat_grid)
-    points = np.column_stack((lon_grid[mask], lat_grid[mask]))
+    # Create a base mask for valid coordinate values (non-infinite)
+    valid_coord_mask = np.isfinite(lon_grid) & np.isfinite(lat_grid)
 
+    # Define the target grid for interpolation using the specified bounding box
     lon_out = np.arange(GEOTIFF_BBOX[0], GEOTIFF_BBOX[2], GEOTIFF_RESOLUTION)
     lat_out = np.arange(GEOTIFF_BBOX[3], GEOTIFF_BBOX[1], -GEOTIFF_RESOLUTION)
     lon_target, lat_target = np.meshgrid(lon_out, lat_out)
@@ -119,12 +212,24 @@ def convert_zarr_to_geotiffs(zarr_path: str, output_dir: str) -> None:
         Path(var_output_dir).mkdir(parents=True, exist_ok=True)
 
         for step_idx in range(len(steps)):
-            log.info(f"Processing: Variable '{var_name}' (index {var_idx}), Step {step_idx}")
+            log.info(f"Processing: Variable '{var_name}', Step {step_idx}")
 
             try:
-                # Select the data slice
+                # Select the specific data slice
                 data_slice = ds.sat_pred.isel(init_time=0, variable=var_idx, step=step_idx).values
-                values = data_slice[mask]
+
+                # **Crucial Fix**: Create a mask for valid data points *for this specific slice*
+                valid_data_mask = ~np.isnan(data_slice)
+                final_mask = valid_coord_mask & valid_data_mask
+
+                # Get the source points and values for interpolation from the masked arrays
+                points = np.column_stack((lon_grid[final_mask], lat_grid[final_mask]))
+                values = data_slice[final_mask]
+
+                # Cubic interpolation requires at least 4 points
+                if points.shape[0] < 4:
+                    log.warning(f"Not enough valid data points ({points.shape[0]}) for interpolation. Skipping slice: var='{var_name}', step={step_idx}")
+                    continue
 
                 # Interpolate data onto the target WGS84 grid
                 interp_data = griddata(
@@ -137,7 +242,7 @@ def convert_zarr_to_geotiffs(zarr_path: str, output_dir: str) -> None:
 
             except Exception as e:
                 log.opt(exception=e).error(f"Error processing slice: var='{var_name}', step={step_idx}")
-                continue # Continue to the next file
+                continue  # Continue to the next file
 
     ds.close()
     log.success(f"Finished GeoTIFF conversion for {zarr_path}. Processed {total_files} files.")
