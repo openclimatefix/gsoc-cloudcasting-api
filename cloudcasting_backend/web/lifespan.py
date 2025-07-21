@@ -94,8 +94,9 @@ async def lifespan_setup(
     app.middleware_stack = app.build_middleware_stack()
 
     # Start the scheduled S3 download thread
-    if settings.environment != "pytest":  # Don't start in test environment
-        start_download_thread()
+    # Disabled: Auto-running thread removed, use /trigger-download endpoint instead
+    # if settings.environment != "pytest":  # Don't start in test environment
+    #     start_download_thread()
 
     yield
     stop_opentelemetry(app)

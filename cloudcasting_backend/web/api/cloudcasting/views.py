@@ -1,5 +1,6 @@
 """API endpoints for cloudcasting data."""
 
+import os
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, status
@@ -8,6 +9,8 @@ from pydantic import BaseModel
 from cloudcasting_backend.services.s3_downloader import (
     download_s3_folder,
     get_current_forecast_folder,
+    convert_zarr_to_geotiffs,
+    GEOTIFF_STORAGE_PATH,
 )
 from cloudcasting_backend.settings import settings
 
@@ -53,6 +56,7 @@ async def get_cloudcasting_status() -> CloudcastingResponse:
 async def trigger_download() -> CloudcastingResponse:
     """
     Manually trigger a download of the latest cloudcasting data.
+    Downloads the data and converts it to GeoTIFF format, then completes.
     """
     try:
         bucket_name = settings.s3_bucket_name
@@ -63,8 +67,14 @@ async def trigger_download() -> CloudcastingResponse:
         Path(local_dir).mkdir(parents=True, exist_ok=True)
 
         # Download the data
-        download_s3_folder(bucket_name, s3_folder, local_dir)
+        downloaded_zarr_path = download_s3_folder(bucket_name, s3_folder, local_dir)
 
+        # Convert to GeoTIFF if download was successful
+        if downloaded_zarr_path:
+            geotiff_run_dir = Path(GEOTIFF_STORAGE_PATH) / Path(downloaded_zarr_path).name
+            convert_zarr_to_geotiffs(downloaded_zarr_path, str(geotiff_run_dir))
+
+        # Check if data is available and return path
         latest_path = Path(local_dir) / "cloudcasting_forecast" / "latest.zarr"
         if latest_path.exists():
             relative_path = latest_path.relative_to(
@@ -75,7 +85,7 @@ async def trigger_download() -> CloudcastingResponse:
             data_path = ""
 
         return CloudcastingResponse(
-            message="Download triggered successfully",
+            message="Download and conversion completed successfully",
             data_path=data_path,
         )
     except Exception as e:
