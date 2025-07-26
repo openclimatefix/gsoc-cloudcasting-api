@@ -2,8 +2,10 @@
 
 import os
 from pathlib import Path
+from typing import List
 
 from fastapi import APIRouter, HTTPException, status
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from cloudcasting_backend.services.s3_downloader import (
@@ -22,6 +24,13 @@ class CloudcastingResponse(BaseModel):
 
     message: str
     data_path: str
+
+
+class AvailableLayersResponse(BaseModel):
+    """Response model for available layers."""
+
+    channels: List[str]
+    steps: List[int]
 
 
 @router.get("/status", response_model=CloudcastingResponse)
@@ -71,8 +80,7 @@ async def trigger_download() -> CloudcastingResponse:
 
         # Convert to GeoTIFF if download was successful
         if downloaded_zarr_path:
-            geotiff_run_dir = Path(GEOTIFF_STORAGE_PATH) / Path(downloaded_zarr_path).name
-            convert_zarr_to_geotiffs(downloaded_zarr_path, str(geotiff_run_dir))
+            convert_zarr_to_geotiffs(downloaded_zarr_path, GEOTIFF_STORAGE_PATH)
 
         # Check if data is available and return path
         latest_path = Path(local_dir) / "cloudcasting_forecast" / "latest.zarr"
@@ -93,3 +101,65 @@ async def trigger_download() -> CloudcastingResponse:
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to download data: {e!s}",
         )
+
+
+@router.get("/layers", response_model=AvailableLayersResponse)
+async def get_available_layers() -> AvailableLayersResponse:
+    """
+    Get list of available channels and steps for TIF layers.
+    
+    Returns the available variable names (channels) and step indices.
+    """
+    layers_path = Path(settings.geotiff_storage_path)
+    
+    if not layers_path.exists():
+        return AvailableLayersResponse(channels=[], steps=[])
+    
+    channels = []
+    all_steps = set()
+    
+    # Scan for available channels (variable directories)
+    for channel_dir in layers_path.iterdir():
+        if channel_dir.is_dir():
+            channels.append(channel_dir.name)
+            
+            # Scan for available steps in this channel
+            for tif_file in channel_dir.glob("*.tif"):
+                # Extract step number from filename (e.g., "step_0.tif" -> 0)
+                if tif_file.stem.isdigit():
+                    all_steps.add(int(tif_file.stem))
+    
+    return AvailableLayersResponse(
+        channels=sorted(channels),
+        steps=sorted(list(all_steps))
+    )
+
+
+@router.get("/layers/{channel}/{step}.tif")
+async def get_tif_layer(channel: str, step: int):
+    """
+    Serve a specific TIF file for the given channel and step.
+    
+    Args:
+        channel: The variable name (channel) 
+        step: The step number
+        
+    Returns:
+        FileResponse: The TIF file for display in Mapbox
+    """
+    # Construct the file path
+    tif_path = Path(settings.geotiff_storage_path) / channel / f"{step}.tif"
+    
+    # Check if file exists
+    if not tif_path.exists():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"TIF file not found for channel '{channel}' and step '{step}'"
+        )
+    
+    # Return the file
+    return FileResponse(
+        path=str(tif_path),
+        media_type="image/tiff",
+        filename=f"{channel}_step_{step}.tif"
+    )

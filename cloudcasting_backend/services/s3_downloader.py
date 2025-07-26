@@ -25,7 +25,7 @@ from scipy.interpolate import griddata
 from cloudcasting_backend.settings import settings
 
 # --- Configuration for GeoTIFF Conversion ---
-GEOTIFF_STORAGE_PATH = "layers"  # Base directory for all GeoTIFF output
+GEOTIFF_STORAGE_PATH = "cloudcasting_backend/static/layers"  # Base directory for all GeoTIFF output
 # Bounding box for cropping the GeoTIFF output [lon_min, lat_min, lon_max, lat_max]
 GEOTIFF_BBOX = [-19.0, 42.0, 15.0, 65.0]
 GEOTIFF_RESOLUTION = 0.075  # Output grid resolution in degrees
@@ -237,7 +237,7 @@ def convert_zarr_to_geotiffs(zarr_path: str, output_dir: str) -> None:
                 ).astype(np.float32)
 
                 # Define final output path and save the file
-                output_filename = os.path.join(var_output_dir, f"step_{step_idx}.tif")
+                output_filename = os.path.join(var_output_dir, f"{step_idx}.tif")
                 save_to_geotiff(output_filename, interp_data, lat_target, lon_target)
 
             except Exception as e:
