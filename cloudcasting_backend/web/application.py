@@ -1,10 +1,9 @@
 import logging
 from importlib import metadata
 from pathlib import Path
-import os
-import tomli
 
 import sentry_sdk
+import tomli
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import UJSONResponse
