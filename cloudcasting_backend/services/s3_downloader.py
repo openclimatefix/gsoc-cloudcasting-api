@@ -1,13 +1,14 @@
 """
-Module for downloading data from an S3 bucket on a 30-minute interval,
-followed by conversion of the downloaded Zarr data to GeoTIFF format.
+Module for on-demand downloading and processing of S3 Zarr data,
+triggered by an external scheduler (e.g., cron).
 """
 
 import datetime
 import os
 import re
-import threading
-import time
+import shutil
+import tempfile
+import multiprocessing
 from functools import wraps
 from pathlib import Path
 from typing import Callable, Optional, Dict, Any
@@ -17,6 +18,7 @@ import numpy as np
 import pyproj
 import rasterio
 import xarray as xr
+from botocore.exceptions import ClientError
 from loguru import logger as log
 from rasterio.crs import CRS
 from rasterio.transform import from_bounds
@@ -29,9 +31,16 @@ GEOTIFF_STORAGE_PATH = "cloudcasting_backend/static/layers"  # Base directory fo
 # Bounding box for cropping the GeoTIFF output [lon_min, lat_min, lon_max, lat_max]
 GEOTIFF_BBOX = [-19.0, 42.0, 15.0, 65.0]
 GEOTIFF_RESOLUTION = 0.075  # Output grid resolution in degrees
+S3_ZARR_PREFIX = "cloudcasting_forecast/latest.zarr/" # The S3 prefix for the latest forecast
+
+# --- State Management for Cron Job ---
+_process_lock = multiprocessing.Lock()
+_current_process: Optional[multiprocessing.Process] = None
+_TIMESTAMP_FILE = Path(GEOTIFF_STORAGE_PATH) / "_last_processed_timestamp.txt"
+
 
 # ==============================================================================
-# == GEO-TIFF CONVERSION FUNCTIONS
+# == GEO-TIFF CONVERSION FUNCTIONS (Unchanged)
 # ==============================================================================
 
 def save_to_geotiff(filename: str, data: np.ndarray, lat_grid: np.ndarray, lon_grid: np.ndarray, nodata: float = np.nan) -> None:
@@ -160,7 +169,7 @@ def convert_zarr_to_geotiffs(zarr_path: str, output_dir: str) -> None:
 
     Args:
         zarr_path: Path to the root of the downloaded Zarr dataset.
-        output_dir: The directory where GeoTIFF files will be saved.
+        output_dir: The base directory where variable-specific GeoTIFF folders will be created.
     """
     log.info(f"Starting Zarr to GeoTIFF conversion for: {zarr_path}")
     if not os.path.exists(zarr_path):
@@ -175,27 +184,15 @@ def convert_zarr_to_geotiffs(zarr_path: str, output_dir: str) -> None:
 
     # --- 1. Extract Satellite Info & Pre-calculate transformations ---
     satellite_info = extract_satellite_info(ds)
-
-    x_coords = ds.x_geostationary.values
-    y_coords = ds.y_geostationary.values
+    x_coords, y_coords = ds.x_geostationary.values, ds.y_geostationary.values
     x_mesh, y_mesh = np.meshgrid(x_coords, y_coords)
 
-    geos_proj = pyproj.Proj(
-        proj='geos',
-        h=satellite_info['height'],
-        lon_0=satellite_info['longitude'],
-        sweep='y'
-    )
+    geos_proj = pyproj.Proj(proj='geos', h=satellite_info['height'], lon_0=satellite_info['longitude'], sweep='y')
     wgs84_proj = pyproj.Proj(proj='latlong', datum='WGS84')
     transformer = pyproj.Transformer.from_proj(geos_proj, wgs84_proj, always_xy=True)
-
-    # Perform the expensive coordinate transformation once
     lon_grid, lat_grid = transformer.transform(x_mesh, y_mesh)
-
-    # Create a base mask for valid coordinate values (non-infinite)
     valid_coord_mask = np.isfinite(lon_grid) & np.isfinite(lat_grid)
 
-    # Define the target grid for interpolation using the specified bounding box
     lon_out = np.arange(GEOTIFF_BBOX[0], GEOTIFF_BBOX[2], GEOTIFF_RESOLUTION)
     lat_out = np.arange(GEOTIFF_BBOX[3], GEOTIFF_BBOX[1], -GEOTIFF_RESOLUTION)
     lon_target, lat_target = np.meshgrid(lon_out, lat_out)
@@ -208,41 +205,34 @@ def convert_zarr_to_geotiffs(zarr_path: str, output_dir: str) -> None:
     log.info(f"Found {len(variables)} variables and {len(steps)} steps. Processing {total_files} files.")
 
     for var_idx, var_name in enumerate(variables):
+        # Save layers to /layers/VAR_NAME/0.tif, /layers/VAR_NAME/1.tif etc.
         var_output_dir = os.path.join(output_dir, str(var_name))
         Path(var_output_dir).mkdir(parents=True, exist_ok=True)
 
         for step_idx in range(len(steps)):
             log.info(f"Processing: Variable '{var_name}', Step {step_idx}")
-
             try:
-                # Select the specific data slice
                 data_slice = ds.sat_pred.isel(init_time=0, variable=var_idx, step=step_idx).values
-
-                # **Crucial Fix**: Create a mask for valid data points *for this specific slice*
                 valid_data_mask = ~np.isnan(data_slice)
                 final_mask = valid_coord_mask & valid_data_mask
 
-                # Get the source points and values for interpolation from the masked arrays
                 points = np.column_stack((lon_grid[final_mask], lat_grid[final_mask]))
                 values = data_slice[final_mask]
 
-                # Cubic interpolation requires at least 4 points
                 if points.shape[0] < 4:
-                    log.warning(f"Not enough valid data points ({points.shape[0]}) for interpolation. Skipping slice: var='{var_name}', step={step_idx}")
+                    log.warning(f"Not enough valid data points ({points.shape[0]}) for interpolation. Skipping.")
                     continue
 
-                # Interpolate data onto the target WGS84 grid
                 interp_data = griddata(
                     points, values, (lon_target, lat_target), method='cubic', fill_value=np.nan
                 ).astype(np.float32)
 
-                # Define final output path and save the file
                 output_filename = os.path.join(var_output_dir, f"{step_idx}.tif")
                 save_to_geotiff(output_filename, interp_data, lat_target, lon_target)
 
             except Exception as e:
                 log.opt(exception=e).error(f"Error processing slice: var='{var_name}', step={step_idx}")
-                continue  # Continue to the next file
+                continue
 
     ds.close()
     log.success(f"Finished GeoTIFF conversion for {zarr_path}. Processed {total_files} files.")
@@ -252,30 +242,18 @@ def convert_zarr_to_geotiffs(zarr_path: str, output_dir: str) -> None:
 # == S3 DATA DOWNLOADER FUNCTIONS
 # ==============================================================================
 
-def ensure_directory_exists(func: Callable[..., None]) -> Callable[..., None]:
-    """Decorator to ensure directory exists before running the function."""
-    @wraps(func)
-    def wrapper(*args: object, **kwargs: object) -> None:
-        local_dir = kwargs.get("local_dir") or args[2] if len(args) > 2 else None
-        if local_dir:
-            Path(str(local_dir)).mkdir(parents=True, exist_ok=True)
-        return func(*args, **kwargs)
-    return wrapper
-
-
-@ensure_directory_exists
 def download_s3_folder(
     bucket_name: str,
     s3_folder: str,
-    local_dir: Optional[str] = None,
+    local_dir: str,
 ) -> Optional[str]:
     """
     Download the contents of a folder directory from S3.
 
     Args:
         bucket_name: The name of the S3 bucket.
-        s3_folder: The folder path in the S3 bucket.
-        local_dir: A relative or absolute directory path in the local file system.
+        s3_folder: The prefix (folder) to download from S3.
+        local_dir: A local directory path to download to.
 
     Returns:
         The local path to the downloaded folder, or None on failure.
@@ -286,136 +264,217 @@ def download_s3_folder(
         aws_secret_access_key=settings.s3_secret_access_key,
         region_name=settings.s3_region_name,
     )
-
-    log.info(f"Starting download from bucket '{bucket_name}', folder '{s3_folder}'")
     bucket = s3.Bucket(bucket_name)
-    downloaded_files = 0
-    
-    # Define a specific destination directory for this download run
-    zarr_folder_name = os.path.basename(s3_folder.rstrip('/'))
-    destination_path = os.path.join(local_dir, zarr_folder_name)
-    Path(destination_path).mkdir(parents=True, exist_ok=True)
-
     objects = list(bucket.objects.filter(Prefix=s3_folder).limit(1))
     if not objects:
-        log.warning(f"No objects found with prefix '{s3_folder}'. Trying 'latest.zarr' as a fallback.")
-        s3_folder = "cloudcasting_forecast/latest.zarr/"
-        # Update destination path for fallback
-        destination_path = os.path.join(local_dir, "latest.zarr")
-        Path(destination_path).mkdir(parents=True, exist_ok=True)
+        log.error(f"S3 prefix '{s3_folder}' does not exist or is empty in bucket '{bucket_name}'.")
+        return None
 
+    log.info(f"Starting download from s3://{bucket_name}/{s3_folder} to '{local_dir}'")
+    downloaded_files = 0
     for obj in bucket.objects.filter(Prefix=s3_folder):
-        target = os.path.join(destination_path, os.path.relpath(obj.key, s3_folder))
-        
-        if obj.key.endswith("/"):
-            os.makedirs(target, exist_ok=True)
-            continue
-        
-        # Ensure parent directory of the file exists
-        os.makedirs(os.path.dirname(target), exist_ok=True)
-        
-        bucket.download_file(obj.key, target)
-        downloaded_files += 1
+        target = os.path.join(local_dir, os.path.relpath(obj.key, s3_folder))
+        if not obj.key.endswith("/"):
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            bucket.download_file(obj.key, target)
+            downloaded_files += 1
 
     if downloaded_files > 0:
-        log.info(f"Finished downloading {downloaded_files} files from '{s3_folder}' to '{destination_path}'")
-        return destination_path
+        log.success(f"Finished downloading {downloaded_files} files to '{local_dir}'")
+        return local_dir
     else:
-        log.error(f"Download failed: No files were found in '{s3_folder}' to download.")
+        log.error(f"Download failed: No files were found under prefix '{s3_folder}'.")
+        return None
+
+# ================================================================================
+# == CRON-TRIGGERED JOB LOGIC
+# ================================================================================
+
+def get_s3_timestamp(bucket_name: str, s3_prefix: str) -> Optional[datetime.datetime]:
+    """Get the LastModified timestamp of the .zattrs file in the S3 prefix."""
+    try:
+        s3_client = boto3.client(
+            "s3",
+            aws_access_key_id=settings.s3_access_key_id,
+            aws_secret_access_key=settings.s3_secret_access_key,
+            region_name=settings.s3_region_name,
+        )
+        # A key that should always exist and represent the dataset's age
+        key_to_check = f"{s3_prefix.rstrip('/')}/.zattrs"
+        response = s3_client.head_object(Bucket=bucket_name, Key=key_to_check)
+        s3_time = response['LastModified']
+        log.info(f"S3 timestamp for '{key_to_check}' is {s3_time}")
+        return s3_time
+    except ClientError as e:
+        if e.response['Error']['Code'] == '404':
+            log.error(f"S3 object not found: {key_to_check}")
+        else:
+            log.opt(exception=e).error("Failed to get S3 object metadata.")
+        return None
+
+def get_local_timestamp() -> Optional[datetime.datetime]:
+    """Reads the last processed timestamp from the local file."""
+    try:
+        if _TIMESTAMP_FILE.exists():
+            content = _TIMESTAMP_FILE.read_text().strip()
+            ts = datetime.datetime.fromisoformat(content)
+            log.info(f"Found local timestamp: {ts}")
+            return ts
+        else:
+            log.info("Local timestamp file not found. Will assume this is a first run.")
+            return None
+    except Exception as e:
+        log.opt(exception=e).error("Could not read or parse local timestamp file.")
         return None
 
 
-def get_current_forecast_folder(
-    target_time: Optional[datetime.datetime] = None,
-) -> str:
+def _job_worker(bucket_name: str, s3_prefix: str, geotiff_dir: str) -> None:
     """
-    Get the S3 forecast folder name for a specific timestamp.
+    The core logic for the update job, designed to be run in a separate process.
     """
-    if not target_time:
-        target_time = datetime.datetime.now(datetime.timezone.utc)
-        minutes = target_time.minute
-        target_time = target_time.replace(minute=(0 if minutes < 30 else 30), second=0, microsecond=0)
+    try:
+        # 1. Check if an update is needed
+        s3_time = get_s3_timestamp(bucket_name, s3_prefix)
+        if not s3_time:
+            log.error("Could not retrieve S3 timestamp. Aborting job.")
+            return
 
-    forecast_folder = f"cloudcasting_forecast/{target_time.strftime('%Y-%m-%dT%H:%M')}.zarr/"
-    log.info(f"Determined S3 forecast folder: {forecast_folder}")
-    return forecast_folder
+        local_time = get_local_timestamp()
+        if local_time and s3_time <= local_time:
+            log.info("S3 data is not newer than last processed data. No update needed.")
+            return
+
+        log.info("Newer data found on S3. Starting download and conversion process.")
+
+        # 2. Download to a temporary directory
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zarr_local_path = os.path.join(tmpdir, 'latest.zarr')
+            downloaded_path = download_s3_folder(
+                bucket_name=bucket_name,
+                s3_folder=s3_prefix,
+                local_dir=zarr_local_path
+            )
+
+            if not downloaded_path:
+                log.error("Download failed. Aborting job.")
+                return
+
+            # 3. Convert to GeoTIFFs in the final destination
+            # First, ensure the destination exists
+            Path(geotiff_dir).mkdir(parents=True, exist_ok=True)
+            convert_zarr_to_geotiffs(downloaded_path, geotiff_dir)
+
+            # 4. On success, update the local timestamp file
+            try:
+                _TIMESTAMP_FILE.write_text(s3_time.isoformat())
+                log.success(f"Successfully updated local timestamp to {s3_time.isoformat()}")
+            except Exception as e:
+                log.opt(exception=e).error("CRITICAL: Failed to write new timestamp after successful processing.")
+
+    except Exception as e:
+        log.opt(exception=e).critical("An unhandled exception occurred in the job worker process.")
+    finally:
+        log.info("Job worker process finished.")
 
 
-def scheduled_download(
-    bucket_name: str = settings.s3_bucket_name,
-    zarr_local_dir: str = settings.zarr_storage_path,
-    geotiff_local_dir: str = GEOTIFF_STORAGE_PATH,
-) -> None:
+def run_update_job() -> None:
     """
-    Schedule the download of an S3 folder and subsequent conversion to GeoTIFF.
+    The main entry point to be called by an external scheduler (cron).
+
+    It manages a single background process, ensuring that only one instance
+    of the download/conversion job runs at a time. If a new job is triggered
+    while an old one is running, the new request is ignored.
     """
-    log.info(f"Starting scheduled task. Zarrs will be saved to '{zarr_local_dir}', GeoTIFFs to '{geotiff_local_dir}'.")
-    generation_delay = 15  # Wait 15 mins past the hour/half-hour for data to be ready
+    global _current_process
+    with _process_lock:
+        if _current_process and _current_process.is_alive():
+            log.info(f"Previous job (PID: {_current_process.pid}) is still running. Ignoring new request.")
+            return
 
-    while True:
-        try:
-            now = datetime.datetime.now(datetime.timezone.utc)
-            
-            # Determine the most recent, ready-to-download forecast time
-            if now.minute >= 30 + generation_delay:
-                target_time = now.replace(minute=30, second=0, microsecond=0)
-            elif now.minute >= generation_delay:
-                target_time = now.replace(minute=0, second=0, microsecond=0)
-            else: # Not yet 15 mins past the hour, get previous half-hour slot
-                target_time = now.replace(second=0, microsecond=0) - datetime.timedelta(minutes=now.minute % 30 + 30)
-            
-            log.info(f"Targeting forecast for time: {target_time.strftime('%Y-%m-%d %H:%M:%S UTC')}")
-            
-            # --- 1. Download the data ---
-            s3_folder = get_current_forecast_folder(target_time=target_time)
-            downloaded_zarr_path = download_s3_folder(bucket_name, s3_folder, zarr_local_dir)
-            
-            # --- 2. Convert to GeoTIFF ---
-            if downloaded_zarr_path:
-                geotiff_run_dir = os.path.join(geotiff_local_dir, os.path.basename(downloaded_zarr_path))
-                convert_zarr_to_geotiffs(downloaded_zarr_path, geotiff_run_dir)
-            else:
-                log.warning("Skipping GeoTIFF conversion because download failed or returned no files.")
-
-            # --- 3. Calculate sleep time until next run ---
-            now = datetime.datetime.now(datetime.timezone.utc)
-            if now.minute < 30:
-                next_run_base = now.replace(minute=30, second=0, microsecond=0)
-            else:
-                next_run_base = (now + datetime.timedelta(hours=1)).replace(minute=0, second=0, microsecond=0)
-            
-            next_run_with_delay = next_run_base + datetime.timedelta(minutes=generation_delay)
-            sleep_seconds = (next_run_with_delay - now).total_seconds()
-            
-            if sleep_seconds <= 0:
-                sleep_seconds = 60 # Default to 1 minute if calculation is off
-
-            log.info(f"Next download check scheduled for: {next_run_with_delay.strftime('%Y-%m-%d %H:%M:%S UTC')}")
-            log.info(f"Sleeping for {sleep_seconds/60:.2f} minutes.")
-            time.sleep(sleep_seconds)
-
-        except Exception as e:
-            log.opt(exception=e).critical("An unhandled error occurred in the scheduling loop.")
-            log.info("Retrying in 5 minutes...")
-            time.sleep(300)
+        log.info("Starting new background job for data download and conversion.")
+        _current_process = multiprocessing.Process(
+            target=_job_worker,
+            args=(
+                settings.s3_bucket_name,
+                S3_ZARR_PREFIX,
+                GEOTIFF_STORAGE_PATH,
+            ),
+            daemon=True
+        )
+        _current_process.start()
+        log.info(f"Job started with PID: {_current_process.pid}")
 
 
-def start_download_thread() -> None:
-    """Start the download and conversion process in a separate thread."""
-    download_thread = threading.Thread(
-        target=scheduled_download,
-        daemon=True,
-    )
-    log.info("Starting S3 downloader and GeoTIFF converter thread.")
-    download_thread.start()
+# ==============================================================================
+# == API INTEGRATION FUNCTIONS
+# ==============================================================================
+
+def trigger_background_download() -> str:
+    """
+    Trigger a background download and return a task ID.
+    
+    Returns:
+        A task ID that can be used to track the job.
+        
+    Raises:
+        RuntimeError: If a job is already running.
+    """
+    global _current_process
+    with _process_lock:
+        if _current_process and _current_process.is_alive():
+            raise RuntimeError(f"Download job already running with PID: {_current_process.pid}")
+        
+        # Start the background job
+        run_update_job()
+        
+        # Return the process ID as task ID
+        if _current_process:
+            return str(_current_process.pid)
+        else:
+            raise RuntimeError("Failed to start background process")
 
 
-if __name__ == "__main__":
-    # This block allows running the script directly for testing.
-    # Ensure you have a 'cloudcasting_backend/settings.py' file or mock the settings object.
-    log.info("Running S3 downloader and converter script directly...")
-    scheduled_download(
-        bucket_name=settings.s3_bucket_name,
-        zarr_local_dir=settings.zarr_storage_path,
-        geotiff_local_dir=GEOTIFF_STORAGE_PATH,
-    )
+def get_download_status() -> Dict[str, Any]:
+    """
+    Get the current status of the download process.
+    
+    Returns:
+        Dictionary with status information.
+    """
+    global _current_process
+    
+    with _process_lock:
+        is_running = bool(_current_process and _current_process.is_alive())
+        
+        status_info = {
+            "is_running": is_running,
+            "current_task": None,
+            "last_completed": None,
+            "error": None
+        }
+        
+        if is_running and _current_process:
+            status_info["current_task"] = f"Process {_current_process.pid} downloading and converting data"
+        
+        # Check for last processed timestamp
+        if _TIMESTAMP_FILE.exists():
+            try:
+                last_processed = _TIMESTAMP_FILE.read_text().strip()
+                status_info["last_completed"] = last_processed
+            except Exception as e:
+                log.opt(exception=e).warning("Could not read last processed timestamp")
+        
+        return status_info
+
+
+def get_current_forecast_folder() -> Optional[str]:
+    """
+    Get the path to the current forecast folder if it exists.
+    
+    Returns:
+        Path to the current forecast folder or None if not available.
+    """
+    layers_path = Path(GEOTIFF_STORAGE_PATH)
+    if layers_path.exists() and any(layers_path.iterdir()):
+        return str(layers_path)
+    return None

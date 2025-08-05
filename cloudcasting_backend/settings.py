@@ -64,6 +64,7 @@ class Settings(BaseSettings):
         env_file=".env",
         env_prefix="CLOUDCASTING_BACKEND_",
         env_file_encoding="utf-8",
+        extra="ignore",  # Ignore extra fields from .env file
     )
 
 

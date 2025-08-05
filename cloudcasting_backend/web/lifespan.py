@@ -1,7 +1,9 @@
+import os
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
 from fastapi import FastAPI
+from loguru import logger as log
 from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from opentelemetry.sdk.resources import (
@@ -14,7 +16,6 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.trace import set_tracer_provider
 
-from cloudcasting_backend.services import start_download_thread
 from cloudcasting_backend.settings import settings
 
 
@@ -93,10 +94,6 @@ async def lifespan_setup(
     setup_opentelemetry(app)
     app.middleware_stack = app.build_middleware_stack()
 
-    # Start the scheduled S3 download thread
-    # Disabled: Auto-running thread removed, use /trigger-download endpoint instead
-    # if settings.environment != "pytest":  # Don't start in test environment
-    #     start_download_thread()
 
     yield
     stop_opentelemetry(app)

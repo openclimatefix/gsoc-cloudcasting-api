@@ -2,16 +2,16 @@
 
 import os
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException, status
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from cloudcasting_backend.services.s3_downloader import (
-    download_s3_folder,
+    run_update_job,
+    get_download_status,
     get_current_forecast_folder,
-    convert_zarr_to_geotiffs,
     GEOTIFF_STORAGE_PATH,
 )
 from cloudcasting_backend.settings import settings
@@ -31,6 +31,22 @@ class AvailableLayersResponse(BaseModel):
 
     channels: List[str]
     steps: List[int]
+
+
+class BackgroundTaskResponse(BaseModel):
+    """Response model for background tasks."""
+    
+    task_id: str
+    message: str
+
+
+class DownloadStatusResponse(BaseModel):
+    """Response model for download status."""
+    
+    is_running: bool
+    current_task: Optional[str] = None
+    last_completed: Optional[str] = None
+    error: Optional[str] = None
 
 
 @router.get("/status", response_model=CloudcastingResponse)
@@ -61,46 +77,44 @@ async def get_cloudcasting_status() -> CloudcastingResponse:
     )
 
 
-@router.post("/trigger-download", response_model=CloudcastingResponse)
-async def trigger_download() -> CloudcastingResponse:
+@router.post("/trigger-download", response_model=BackgroundTaskResponse)
+async def trigger_download() -> BackgroundTaskResponse:
     """
-    Manually trigger a download of the latest cloudcasting data.
-    Downloads the data and converts it to GeoTIFF format, then completes.
+    Trigger a background download of the latest cloudcasting data.
+    Downloads the data and converts it to GeoTIFF format in the background.
+    Returns immediately with a task ID that can be used to check status.
     """
     try:
-        bucket_name = settings.s3_bucket_name
-        s3_folder = get_current_forecast_folder()
-        local_dir = settings.zarr_storage_path
-
-        # Ensure directory exists
-        Path(local_dir).mkdir(parents=True, exist_ok=True)
-
-        # Download the data
-        downloaded_zarr_path = download_s3_folder(bucket_name, s3_folder, local_dir)
-
-        # Convert to GeoTIFF if download was successful
-        if downloaded_zarr_path:
-            convert_zarr_to_geotiffs(downloaded_zarr_path, GEOTIFF_STORAGE_PATH)
-
-        # Check if data is available and return path
-        latest_path = Path(local_dir) / "cloudcasting_forecast" / "latest.zarr"
-        if latest_path.exists():
-            relative_path = latest_path.relative_to(
-                Path(settings.zarr_storage_path).parent,
-            )
-            data_path = f"/static/{relative_path}"
-        else:
-            data_path = ""
-
-        return CloudcastingResponse(
-            message="Download and conversion completed successfully",
-            data_path=data_path,
+        # Directly call run_update_job to start the background process
+        run_update_job()
+        
+        # Get the current status to return task info
+        status_info = get_download_status()
+        task_id = status_info.get("current_task", "unknown")
+        
+        return BackgroundTaskResponse(
+            task_id=task_id,
+            message=f"Background download started: {task_id}"
+        )
+    except RuntimeError as e:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(e),
         )
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to download data: {e!s}",
+            detail=f"Failed to start download: {e!s}",
         )
+
+
+@router.get("/download-status", response_model=DownloadStatusResponse)
+async def get_download_status_endpoint() -> DownloadStatusResponse:
+    """
+    Get the current status of background download processes.
+    """
+    status_info = get_download_status()
+    return DownloadStatusResponse(**status_info)
 
 
 @router.get("/layers", response_model=AvailableLayersResponse)
