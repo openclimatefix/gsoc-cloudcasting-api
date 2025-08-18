@@ -8,6 +8,3 @@ services:
     volumes:
       # Adds current directory as volume.
     - .:/app/src/
-    environment:
-      # Enables autoreload.
-      CLOUDCASTING_BACKEND_RELOAD: "True"
