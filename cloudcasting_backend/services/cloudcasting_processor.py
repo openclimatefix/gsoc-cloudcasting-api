@@ -42,7 +42,7 @@ _TIMESTAMP_FILE = Path(GEOTIFF_STORAGE_PATH) / "_last_processed_timestamp.txt"
 
 
 # ==============================================================================
-# == GEO-TIFF CONVERSION FUNCTIONS (Unchanged)
+# == GEO-TIFF CONVERSION FUNCTIONS
 # ==============================================================================
 
 

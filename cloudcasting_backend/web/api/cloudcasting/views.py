@@ -10,7 +10,7 @@ from fastapi import APIRouter, HTTPException, status
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from cloudcasting_backend.services.s3_downloader import (
+from cloudcasting_backend.services.cloudcasting_processor import (
     get_download_status,
     run_update_job,
 )

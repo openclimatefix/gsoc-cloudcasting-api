@@ -1,5 +1,5 @@
 """
-Tests for s3_downloader module functions including conversion functions,
+Tests for cloudcasting_processor module functions including conversion functions,
 satellite detection functions, timestamp handling, and local time functions.
 """
 
@@ -14,7 +14,7 @@ import pytest
 import xarray as xr
 from botocore.exceptions import ClientError
 
-from cloudcasting_backend.services.s3_downloader import (
+from cloudcasting_backend.services.cloudcasting_processor import (
     GEOTIFF_STORAGE_PATH,
     S3_ZARR_PREFIX,
     _TIMESTAMP_FILE,
@@ -77,7 +77,7 @@ class TestConversionFunctions:
             with rasterio.open(filename) as src:
                 assert src.nodata == -999.0
 
-    @patch("cloudcasting_backend.services.s3_downloader.log")
+    @patch("cloudcasting_backend.services.cloudcasting_processor.log")
     def test_save_to_geotiff_error_handling(self, mock_log):
         """Test error handling in save_to_geotiff."""
         # Invalid path should trigger error
@@ -93,9 +93,11 @@ class TestConversionFunctions:
         # Should log an error
         mock_log.opt.assert_called()
 
-    @patch("cloudcasting_backend.services.s3_downloader.xr.open_zarr")
-    @patch("cloudcasting_backend.services.s3_downloader.extract_satellite_info")
-    @patch("cloudcasting_backend.services.s3_downloader.save_to_geotiff")
+    @patch("cloudcasting_backend.services.cloudcasting_processor.xr.open_zarr")
+    @patch(
+        "cloudcasting_backend.services.cloudcasting_processor.extract_satellite_info"
+    )
+    @patch("cloudcasting_backend.services.cloudcasting_processor.save_to_geotiff")
     def test_convert_zarr_to_geotiffs_success(
         self, mock_save, mock_extract, mock_open_zarr
     ):
@@ -129,15 +131,15 @@ class TestConversionFunctions:
             mock_extract.assert_called_once_with(mock_ds)
             assert mock_save.call_count > 0
 
-    @patch("cloudcasting_backend.services.s3_downloader.log")
+    @patch("cloudcasting_backend.services.cloudcasting_processor.log")
     def test_convert_zarr_to_geotiffs_nonexistent_path(self, mock_log):
         """Test error handling for non-existent Zarr path."""
         convert_zarr_to_geotiffs("/nonexistent/path", "/output")
 
         mock_log.error.assert_called()
 
-    @patch("cloudcasting_backend.services.s3_downloader.xr.open_zarr")
-    @patch("cloudcasting_backend.services.s3_downloader.log")
+    @patch("cloudcasting_backend.services.cloudcasting_processor.xr.open_zarr")
+    @patch("cloudcasting_backend.services.cloudcasting_processor.log")
     def test_convert_zarr_to_geotiffs_open_error(self, mock_log, mock_open_zarr):
         """Test error handling when Zarr file cannot be opened."""
         mock_open_zarr.side_effect = Exception("Cannot open Zarr")
@@ -276,7 +278,7 @@ class TestSatelliteDetectionFunctions:
 class TestTimestampFunctions:
     """Test suite for timestamp-related functions."""
 
-    @patch("cloudcasting_backend.services.s3_downloader.boto3.client")
+    @patch("cloudcasting_backend.services.cloudcasting_processor.boto3.client")
     def test_get_s3_timestamp_success(self, mock_boto_client):
         """Test successful S3 timestamp retrieval."""
         # Mock S3 client response
@@ -293,8 +295,8 @@ class TestTimestampFunctions:
             Bucket="test-bucket", Key="test-prefix/zarr.json"
         )
 
-    @patch("cloudcasting_backend.services.s3_downloader.boto3.client")
-    @patch("cloudcasting_backend.services.s3_downloader.log")
+    @patch("cloudcasting_backend.services.cloudcasting_processor.boto3.client")
+    @patch("cloudcasting_backend.services.cloudcasting_processor.log")
     def test_get_s3_timestamp_not_found(self, mock_log, mock_boto_client):
         """Test S3 timestamp retrieval when object not found."""
         mock_client = Mock()
@@ -309,8 +311,8 @@ class TestTimestampFunctions:
         assert result is None
         mock_log.error.assert_called()
 
-    @patch("cloudcasting_backend.services.s3_downloader.boto3.client")
-    @patch("cloudcasting_backend.services.s3_downloader.log")
+    @patch("cloudcasting_backend.services.cloudcasting_processor.boto3.client")
+    @patch("cloudcasting_backend.services.cloudcasting_processor.log")
     def test_get_s3_timestamp_other_error(self, mock_log, mock_boto_client):
         """Test S3 timestamp retrieval with other AWS errors."""
         mock_client = Mock()
@@ -335,7 +337,7 @@ class TestTimestampFunctions:
 
             # Patch the global timestamp file path
             with patch(
-                "cloudcasting_backend.services.s3_downloader._TIMESTAMP_FILE",
+                "cloudcasting_backend.services.cloudcasting_processor._TIMESTAMP_FILE",
                 timestamp_file,
             ):
                 result = get_local_timestamp()
@@ -348,14 +350,14 @@ class TestTimestampFunctions:
             nonexistent_file = Path(temp_dir) / "nonexistent.txt"
 
             with patch(
-                "cloudcasting_backend.services.s3_downloader._TIMESTAMP_FILE",
+                "cloudcasting_backend.services.cloudcasting_processor._TIMESTAMP_FILE",
                 nonexistent_file,
             ):
                 result = get_local_timestamp()
 
                 assert result is None
 
-    @patch("cloudcasting_backend.services.s3_downloader.log")
+    @patch("cloudcasting_backend.services.cloudcasting_processor.log")
     def test_get_local_timestamp_invalid_format(self, mock_log):
         """Test local timestamp retrieval with invalid timestamp format."""
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -363,7 +365,7 @@ class TestTimestampFunctions:
             timestamp_file.write_text("invalid-timestamp-format")
 
             with patch(
-                "cloudcasting_backend.services.s3_downloader._TIMESTAMP_FILE",
+                "cloudcasting_backend.services.cloudcasting_processor._TIMESTAMP_FILE",
                 timestamp_file,
             ):
                 result = get_local_timestamp()
@@ -375,8 +377,8 @@ class TestTimestampFunctions:
 class TestAPIIntegrationFunctions:
     """Test suite for API integration functions."""
 
-    @patch("cloudcasting_backend.services.s3_downloader.run_update_job")
-    @patch("cloudcasting_backend.services.s3_downloader._current_process")
+    @patch("cloudcasting_backend.services.cloudcasting_processor.run_update_job")
+    @patch("cloudcasting_backend.services.cloudcasting_processor._current_process")
     def test_trigger_background_download_success(
         self, mock_current_process, mock_run_job
     ):
@@ -384,31 +386,37 @@ class TestAPIIntegrationFunctions:
         mock_current_process.is_alive.return_value = False
         mock_current_process.pid = 12345
 
-        with patch("cloudcasting_backend.services.s3_downloader._process_lock"):
+        with patch(
+            "cloudcasting_backend.services.cloudcasting_processor._process_lock"
+        ):
             result = trigger_background_download()
 
             assert result == "12345"
             mock_run_job.assert_called_once()
 
-    @patch("cloudcasting_backend.services.s3_downloader._current_process")
+    @patch("cloudcasting_backend.services.cloudcasting_processor._current_process")
     def test_trigger_background_download_already_running(self, mock_current_process):
         """Test background download trigger when job already running."""
         mock_current_process.is_alive.return_value = True
         mock_current_process.pid = 12345
 
-        with patch("cloudcasting_backend.services.s3_downloader._process_lock"):
+        with patch(
+            "cloudcasting_backend.services.cloudcasting_processor._process_lock"
+        ):
             with pytest.raises(RuntimeError, match="Download job already running"):
                 trigger_background_download()
 
-    @patch("cloudcasting_backend.services.s3_downloader._current_process")
+    @patch("cloudcasting_backend.services.cloudcasting_processor._current_process")
     def test_get_download_status_running(self, mock_current_process):
         """Test download status when job is running."""
         mock_current_process.is_alive.return_value = True
         mock_current_process.pid = 12345
 
-        with patch("cloudcasting_backend.services.s3_downloader._process_lock"):
+        with patch(
+            "cloudcasting_backend.services.cloudcasting_processor._process_lock"
+        ):
             with patch(
-                "cloudcasting_backend.services.s3_downloader._TIMESTAMP_FILE"
+                "cloudcasting_backend.services.cloudcasting_processor._TIMESTAMP_FILE"
             ) as mock_file:
                 mock_file.exists.return_value = True
                 mock_file.read_text.return_value = "2024-01-15T12:00:00"
@@ -419,12 +427,16 @@ class TestAPIIntegrationFunctions:
                 assert "Process 12345" in result["current_task"]
                 assert result["last_completed"] == "2024-01-15T12:00:00"
 
-    @patch("cloudcasting_backend.services.s3_downloader._current_process", None)
+    @patch(
+        "cloudcasting_backend.services.cloudcasting_processor._current_process", None
+    )
     def test_get_download_status_not_running(self):
         """Test download status when no job is running."""
-        with patch("cloudcasting_backend.services.s3_downloader._process_lock"):
+        with patch(
+            "cloudcasting_backend.services.cloudcasting_processor._process_lock"
+        ):
             with patch(
-                "cloudcasting_backend.services.s3_downloader._TIMESTAMP_FILE"
+                "cloudcasting_backend.services.cloudcasting_processor._TIMESTAMP_FILE"
             ) as mock_file:
                 mock_file.exists.return_value = False
 
@@ -442,7 +454,7 @@ class TestAPIIntegrationFunctions:
             test_file.write_text("test")
 
             with patch(
-                "cloudcasting_backend.services.s3_downloader.GEOTIFF_STORAGE_PATH",
+                "cloudcasting_backend.services.cloudcasting_processor.GEOTIFF_STORAGE_PATH",
                 temp_dir,
             ):
                 result = get_current_forecast_folder()
@@ -453,7 +465,7 @@ class TestAPIIntegrationFunctions:
         """Test getting current forecast folder when it's empty."""
         with tempfile.TemporaryDirectory() as temp_dir:
             with patch(
-                "cloudcasting_backend.services.s3_downloader.GEOTIFF_STORAGE_PATH",
+                "cloudcasting_backend.services.cloudcasting_processor.GEOTIFF_STORAGE_PATH",
                 temp_dir,
             ):
                 result = get_current_forecast_folder()
@@ -465,7 +477,7 @@ class TestAPIIntegrationFunctions:
         nonexistent_path = "/nonexistent/path"
 
         with patch(
-            "cloudcasting_backend.services.s3_downloader.GEOTIFF_STORAGE_PATH",
+            "cloudcasting_backend.services.cloudcasting_processor.GEOTIFF_STORAGE_PATH",
             nonexistent_path,
         ):
             result = get_current_forecast_folder()
