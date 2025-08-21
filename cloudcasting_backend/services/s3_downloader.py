@@ -344,7 +344,7 @@ def get_s3_timestamp(bucket_name: str, s3_prefix: str) -> Optional[datetime.date
             region_name=settings.s3_region_name,
         )
         # A key that should always exist and represent the dataset's age
-        key_to_check = f"{s3_prefix.rstrip('/')}/.zattrs"
+        key_to_check = f"{s3_prefix.rstrip('/')}/zarr.json"
         response = s3_client.head_object(Bucket=bucket_name, Key=key_to_check)
         s3_time = response["LastModified"]
         log.info(f"S3 timestamp for '{key_to_check}' is {s3_time}")
