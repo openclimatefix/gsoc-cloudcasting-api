@@ -290,7 +290,7 @@ class TestTimestampFunctions:
 
         assert result == expected_time
         mock_client.head_object.assert_called_once_with(
-            Bucket="test-bucket", Key="test-prefix/.zattrs"
+            Bucket="test-bucket", Key="test-prefix/zarr.json"
         )
 
     @patch("cloudcasting_backend.services.s3_downloader.boto3.client")
