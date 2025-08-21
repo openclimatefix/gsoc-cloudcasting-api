@@ -3,11 +3,7 @@ name: Testing cloudcasting_backend
 on: push
 
 jobs:
-  lint:
-    strategy:
-      matrix:
-        cmd:
-          - black
+  test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -18,24 +14,10 @@ jobs:
         with:
           python-version: '3.11'
           cache: 'poetry'
-      - name: Install deps
+      - name: Install dependencies
         run: poetry install --no-root
-      - name: Run lint check
-        run: poetry run pre-commit run -a ${{ matrix.cmd }}
-  pytest:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Create .env
-        run: touch .env
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-      - name: Update docker-compose
-        uses: docker/setup-buildx-action@v3
-        with:
-          version: "2.28.0"
-      - name: run tests
-        run: docker-compose run --rm api pytest -vv
+      - name: Run black lint
+        run: poetry run black --check .
+      - name: Run pytest
+        run: poetry run pytest -vv
 
