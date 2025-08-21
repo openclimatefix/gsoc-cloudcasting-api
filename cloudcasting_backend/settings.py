@@ -43,16 +43,11 @@ class Settings(BaseSettings):
     sentry_dsn: Optional[str] = None
     sentry_sample_rate: float = 1.0
 
-    # Grpc endpoint for opentelemetry.
-    # E.G. http://localhost:4317
-    opentelemetry_endpoint: Optional[str] = None
-
     # S3 configuration for cloudcasting data - dont worry about the empty string here, it is initialized from .env
     s3_bucket_name: str = ""
     s3_region_name: str = ""
     s3_access_key_id: str = ""
     s3_secret_access_key: str = ""
-    s3_download_interval: int = 30
 
     # Path to store downloaded zarr files
     zarr_storage_path: str = "cloudcasting_backend/static/zarr_files"

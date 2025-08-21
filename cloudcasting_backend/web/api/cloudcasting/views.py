@@ -1,8 +1,11 @@
 """API endpoints for cloudcasting data."""
 
+import logging
+from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
 
+import sentry_sdk
 from fastapi import APIRouter, HTTPException, status
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
@@ -43,6 +46,19 @@ class DownloadStatusResponse(BaseModel):
     is_running: bool
     current_task: Optional[str] = None
     last_completed: Optional[str] = None
+    error: Optional[str] = None
+
+
+class ProcessedDataInfoResponse(BaseModel):
+    """Response model for processed data information."""
+
+    file_exists: bool
+    init_time: Optional[str] = None
+    forecast_steps: Optional[List[int]] = None
+    variables: Optional[List[str]] = None
+    file_size_mb: Optional[float] = None
+    last_modified: Optional[str] = None
+    time_range: Optional[dict] = None
     error: Optional[str] = None
 
 
@@ -144,6 +160,89 @@ async def get_available_layers() -> AvailableLayersResponse:
         channels=sorted(channels),
         steps=sorted(list(all_steps)),
     )
+
+
+@router.get("/data-info", response_model=ProcessedDataInfoResponse)
+async def get_processed_data_info() -> ProcessedDataInfoResponse:
+    """
+    Get detailed information about the processed data including time data.
+
+    Returns metadata about the latest processed data including:
+    - Last processed timestamp from the update logic
+    - Available variables and steps (from processed GeoTIFF layers)
+    - Processing status information
+    """
+    # Path to the timestamp file used by the update logic
+    timestamp_file = (
+        Path(settings.geotiff_storage_path) / "_last_processed_timestamp.txt"
+    )
+    layers_path = Path(settings.geotiff_storage_path)
+
+    # Check if we have any processed data
+    if not layers_path.exists() or not any(layers_path.iterdir()):
+        return ProcessedDataInfoResponse(
+            file_exists=False, error="No processed data available yet"
+        )
+
+    try:
+        # Get the last processed timestamp from the update logic
+        last_processed_time = None
+        if timestamp_file.exists():
+            try:
+                timestamp_content = timestamp_file.read_text().strip()
+                last_processed_time = timestamp_content
+            except Exception as e:
+                logging.warning(f"Could not read timestamp file: {e}")
+
+        # Get available variables and steps from the processed GeoTIFF layers
+        variables = []
+        all_steps = set()
+
+        for channel_dir in layers_path.iterdir():
+            if channel_dir.is_dir() and not channel_dir.name.startswith("_"):
+                variables.append(channel_dir.name)
+
+                # Get available steps from this channel
+                for tif_file in channel_dir.glob("*.tif"):
+                    if tif_file.stem.isdigit():
+                        all_steps.add(int(tif_file.stem))
+
+        steps = sorted(list(all_steps))
+
+        # Calculate total size of processed layers
+        file_size_mb = None
+        try:
+            total_size = sum(
+                f.stat().st_size for f in layers_path.rglob("*.tif") if f.is_file()
+            )
+            file_size_mb = round(total_size / (1024 * 1024), 2)
+        except Exception as e:
+            logging.warning(f"Could not calculate file size: {e}")
+
+        # Create time range info using the timestamp from the update logic
+        time_range = None
+        if last_processed_time:
+            time_range = {
+                "last_processed": last_processed_time,
+                "data_source": "S3 download timestamp",
+                "total_forecast_steps": len(steps) if steps else 0,
+                "available_variables": len(variables),
+            }
+
+        return ProcessedDataInfoResponse(
+            file_exists=True,
+            init_time=None,  # Not available from processed layers (zarr is temporary)
+            forecast_steps=steps,
+            variables=variables,
+            file_size_mb=file_size_mb,
+            last_modified=last_processed_time,
+            time_range=time_range,
+        )
+
+    except Exception as e:
+        return ProcessedDataInfoResponse(
+            file_exists=False, error=f"Error reading processed data: {str(e)}"
+        )
 
 
 @router.get("/layers/{channel}/{step}.tif")

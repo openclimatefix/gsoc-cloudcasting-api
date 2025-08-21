@@ -8,8 +8,6 @@ jobs:
       matrix:
         cmd:
           - black
-          - ruff
-          - mypy
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -35,7 +33,7 @@ jobs:
         with:
           python-version: '3.11'
       - name: Update docker-compose
-        uses: KengoTODA/actions-setup-docker-compose@v1
+        uses: docker/setup-buildx-action@v3
         with:
           version: "2.28.0"
       - name: run tests

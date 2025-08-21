@@ -3,7 +3,6 @@ import sys
 from typing import Any, Union
 
 from loguru import logger
-from opentelemetry.trace import INVALID_SPAN, INVALID_SPAN_CONTEXT, get_current_span
 
 from cloudcasting_backend.settings import settings
 
@@ -46,8 +45,7 @@ def record_formatter(record: dict[str, Any]) -> str:  # pragma: no cover
     """
     Formats the record.
 
-    This function formats message
-    by adding extra trace information to the record.
+    This function formats message with timestamp and level.
 
     :param record: record information.
     :return: format string.
@@ -55,20 +53,9 @@ def record_formatter(record: dict[str, Any]) -> str:  # pragma: no cover
     log_format = (
         "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> "
         "| <level>{level: <8}</level> "
-        "| <magenta>trace_id={extra[trace_id]}</magenta> "
-        "| <blue>span_id={extra[span_id]}</blue> "
         "| <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> "
         "- <level>{message}</level>\n"
     )
-
-    span = get_current_span()
-    record["extra"]["span_id"] = 0
-    record["extra"]["trace_id"] = 0
-    if span != INVALID_SPAN:
-        span_context = span.get_span_context()
-        if span_context != INVALID_SPAN_CONTEXT:
-            record["extra"]["span_id"] = format(span_context.span_id, "016x")
-            record["extra"]["trace_id"] = format(span_context.trace_id, "032x")
 
     if record["exception"]:
         log_format = f"{log_format}{{exception}}"
