@@ -30,6 +30,8 @@ rasterio = "^1.4.3"
 scipy = "^1.16.0"
 pyproj = "^3.7.1"
 zarr = "^3.0.10"
+pyjwt = "^2.10.1"
+cryptography = "^45.0.6"
 
 
 [tool.poetry.group.dev.dependencies]

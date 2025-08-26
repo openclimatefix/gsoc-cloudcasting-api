@@ -6,10 +6,11 @@ from pathlib import Path
 from typing import List, Optional
 
 import sentry_sdk
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, status, Depends
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
+from cloudcasting_backend.auth import auth
 from cloudcasting_backend.services.cloudcasting_processor import (
     get_download_status,
     run_update_job,
@@ -246,16 +247,20 @@ async def get_processed_data_info() -> ProcessedDataInfoResponse:
 
 
 @router.get("/layers/{channel}/{step}.tif")
-async def get_tif_layer(channel: str, step: int):
+async def get_tif_layer(channel: str, step: int, user_payload=Depends(auth)):
     """
     Serve a specific TIF file for the given channel and step.
 
     Args:
         channel: The variable name (channel)
         step: The step number
+        user_payload: Authentication payload from JWT token
 
     Returns:
         FileResponse: The TIF file for display in Mapbox
+
+    Requires:
+        Valid JWT token with proper audience and issuer
     """
     # Construct the file path
     tif_path = Path(settings.geotiff_storage_path) / channel / f"{step}.tif"

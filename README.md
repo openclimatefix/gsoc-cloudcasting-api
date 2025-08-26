@@ -13,6 +13,7 @@ A FastAPI-based backend service for processing and serving satellite cloud forec
 - **Format Conversion**: Converts Zarr format to GeoTIFF for mapping applications
 - **Background Processing**: Asynchronous data download and conversion
 - **RESTful API**: Clean API endpoints for data access and status monitoring
+- **Authentication**: JWT-based authentication with Auth0 integration for protected endpoints
 - **Static File Serving**: Direct access to processed GeoTIFF layers
 - **Data Information**: Detailed metadata about processed data and timing information
 
@@ -29,6 +30,10 @@ CLOUDCASTING_BACKEND_S3_BUCKET_NAME=your-bucket-name
 CLOUDCASTING_BACKEND_S3_REGION_NAME=us-east-1
 CLOUDCASTING_BACKEND_S3_ACCESS_KEY_ID=your-access-key-id
 CLOUDCASTING_BACKEND_S3_SECRET_ACCESS_KEY=your-secret-access-key
+
+# Auth0 Configuration
+AUTH0_DOMAIN=your-tenant.auth0.com
+AUTH0_API_AUDIENCE=your-api-audience
 ```
 
 Copy `.env.example` to `.env` and configure the values for your environment:
@@ -85,9 +90,6 @@ and the docs at `http://localhost:8000/api/docs`.
 - `GET /api/cloudcasting/layers` - Get list of available channels and forecast steps
 - `GET /api/cloudcasting/layers/{channel}/{step}.tif` - Download specific GeoTIFF layer
 
-### Static Files
-
-- `GET /static/*` - Access processed GeoTIFF files and other static content
 
 ### Data Information Endpoint
 
@@ -96,17 +98,44 @@ The `/api/cloudcasting/data-info` endpoint provides comprehensive information ab
 ```json
 {
   "file_exists": true,
-  "forecast_steps": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
-  "variables": ["cloud_mask", "temperature", "humidity"],
-  "file_size_mb": 145.23,
-  "last_modified": "2025-08-21T14:30:00.123456",
+  "init_time": null,
+  "forecast_steps": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+  ],
+  "variables": [
+    "VIS006",
+    "WV_062",
+    "WV_073",
+    "VIS008",
+    "IR_039",
+    "IR_108",
+    "IR_120",
+    "IR_134",
+    "IR_087",
+    "IR_016",
+    "IR_097"
+  ],
+  "file_size_mb": 70.29,
+  "last_modified": "2025-08-26T09:43:26+00:00",
   "time_range": {
-    "last_processed": "2025-08-21T14:30:00.123456",
+    "last_processed": "2025-08-26T09:43:26+00:00",
     "data_source": "S3 download timestamp",
-    "total_forecast_steps": 13,
-    "available_variables": 3
-  }
-}
+    "total_forecast_steps": 12,
+    "available_variables": 11
+  },
+  "error": null
+}}
 ```
 
 This endpoint:
@@ -161,48 +190,6 @@ For test coverage:
 $ poetry run pytest --cov=cloudcasting_backend --cov-report=html
 ```
 
-## Project Structure
-
-```
-cloudcasting_backend/
-├── __init__.py
-├── __main__.py          # Application entry point
-├── settings.py          # Configuration management
-├── log.py              # Logging configuration
-├── services/           # Business logic services
-│   ├── __init__.py
-│   └── s3_downloader.py # S3 data processing service
-├── web/               # Web application layer
-│   ├── __init__.py
-│   ├── application.py # FastAPI app configuration
-│   ├── lifespan.py   # Application lifecycle management
-│   └── api/          # API routes
-│       ├── __init__.py
-│       ├── router.py # Main API router
-│       └── cloudcasting/
-│           ├── __init__.py
-│           └── views.py # Cloudcasting endpoints
-└── static/           # Static file storage
-    ├── layers/       # Processed GeoTIFF files (served by API)
-    └── zarr_files/   # Downloaded Zarr files (temporary/intermediate)
-```
-
-### Architecture Notes
-
-- **Zarr files**: Temporary intermediate data, not accessed by API views
-- **GeoTIFF layers**: Final processed output, served by API endpoints
-- **Clean separation**: Views only access processed data and metadata files
-- **Timestamp tracking**: `_last_processed_timestamp.txt` records processing completion
-
-## Data Processing Pipeline
-
-1. **Download**: Fetch latest cloudcasting forecast data from S3 (Zarr format)
-2. **Projection**: Transform geostationary satellite coordinates to WGS84
-3. **Interpolation**: Resample data to regular lat/lon grid
-4. **Conversion**: Save as GeoTIFF files organized by variable and forecast step
-5. **Timestamping**: Record processing completion time in metadata file
-6. **Serving**: Make processed files available via REST API (zarr files remain temporary)
-
 ## Environment Variables
 
 | Variable | Default | Description |
@@ -218,6 +205,8 @@ cloudcasting_backend/
 | `CLOUDCASTING_BACKEND_S3_ACCESS_KEY_ID` | - | **Required**: AWS access key |
 | `CLOUDCASTING_BACKEND_S3_SECRET_ACCESS_KEY` | - | **Required**: AWS secret key |
 | `CLOUDCASTING_BACKEND_SENTRY_DSN` | - | Optional: Sentry error tracking DSN |
+| `AUTH0_DOMAIN` | - | Auth0 domain for JWT authentication |
+| `AUTH0_API_AUDIENCE` | - | Auth0 API audience for JWT validation |
 
 ## Known Issues
 
