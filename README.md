@@ -1,149 +1,244 @@
-# OCF Template
+# CloudCasting Backend API
 
-**Starting point for OCF projects**
- 
-[![workflows badge](https://img.shields.io/github/actions/workflow/status/openclimatefix/ocf-template/ci.yml?branch=maine&color=FFD053&label=workflow)](https://github.com/openclimatefix/ocf-template/actions/workflows/ci.yml)
-[![tags badge](https://img.shields.io/github/v/tag/openclimatefix/ocf-template?include_prereleases&sort=semver&color=FFAC5F)](https://github.com/openclimatefix/ocf-template/tags)
-[![pypi badge](https://img.shields.io/pypi/v/ocf-template?&color=07BCDF)](https://pypi.org/project/ocf-template)
-[![documentation badge](https://img.shields.io/badge/docs-latest-086788)](https://openclimatefix.github.io/ocf-template/)
-[![contributors badge](https://img.shields.io/github/contributors/openclimatefix/ocf-template?color=FFFFFF)](https://github.com/openclimatefix/ocf-template/graphs/contributors)
 [![ease of contribution: easy](https://img.shields.io/badge/ease%20of%20contribution:%20easy-32bd50)](https://github.com/openclimatefix#how-easy-is-it-to-get-involved) 
-[![ease of contribution: medium](https://img.shields.io/badge/ease%20of%20contribution:%20medium-f4900c)](https://github.com/openclimatefix#how-easy-is-it-to-get-involved)
-[![ease of contribution: hard](https://img.shields.io/badge/ease%20of%20contribution:%20hard-bb2629)](https://github.com/openclimatefix#how-easy-is-it-to-get-involved)
+<!-- ALL-CONTRIBUTORS-BADGE:START - Do not remove or modify this section -->
+[![All Contributors](https://img.shields.io/badge/all_contributors-1-orange.svg?style=flat-square)](#contributors-)
+<!-- ALL-CONTRIBUTORS-BADGE:END -->
 
-This section of the README should contain a brief description of the project.
-Perhaps give a short amount of context around why it exists; the problem it solves.
-By the end of reading this short paragraph, a contributor should not be confused
-as to the purpose of the repository and its role in the organisation.
+A FastAPI-based backend service for processing and serving satellite cloud forecasting data. This API provides endpoints for downloading cloudcasting data from S3, converting Zarr files to GeoTIFF format, and serving the processed data for visualization in mapping applications.
 
-They might even have an idea of how it could be useful to them!
+## Features
 
-> [!Note]
-> Any important callouts (informing visitors this repository is in early
-> design stages, or not for general use, or requires a lot of prerequisite
-> knowledge or infrastructure) should be placed in a note like this.
-> Like: This repository does not hold template workflows, contributing
-> guides, etc - head to
-> [OCF's .github repository](https://github.com/openclimatefix/.github)
-> for those.
+- **Satellite Data Processing**: Downloads and processes cloudcasting forecast data from S3
+- **Format Conversion**: Converts Zarr format to GeoTIFF for mapping applications
+- **Background Processing**: Asynchronous data download and conversion
+- **RESTful API**: Clean API endpoints for data access and status monitoring
+- **Authentication**: JWT-based authentication with Auth0 integration for protected endpoints
+- **Static File Serving**: Direct access to processed GeoTIFF layers
+- **Data Information**: Detailed metadata about processed data and timing information
 
+## Running the service
 
-## Installation
+### Configuration
 
-How to install the project for *general use* (**not** for development), so:
-"`pip install x`", or: "pull the latest checkpoint from `y`";
-**not**: "clone the repo and run `make install`".
-For example, to "install" this template as the basis of a new repository,
-do the following:
+The application is configured via environment variables. For the complete list of environment variables, see the [`.env.example`](.env.example) file.
 
-1. Click **Use this template** (in green) above the upper right of this file
-2. Select **Create a new repository**
-3. Create the new repository as desired
+**Required Environment Variables:**
+```bash
+# S3 Configuration (Required)
+CLOUDCASTING_BACKEND_S3_BUCKET_NAME=your-bucket-name
+CLOUDCASTING_BACKEND_S3_REGION_NAME=us-east-1
+CLOUDCASTING_BACKEND_S3_ACCESS_KEY_ID=your-access-key-id
+CLOUDCASTING_BACKEND_S3_SECRET_ACCESS_KEY=your-secret-access-key
 
+# Auth0 Configuration
+AUTH0_DOMAIN=your-tenant.auth0.com
+AUTH0_API_AUDIENCE=your-api-audience
+```
 
-## Example usage
+Copy `.env.example` to `.env` and configure the values for your environment:
+```bash
+$ cp .env.example .env
+# Edit .env with your configuration
+```
 
-One or two short examples of using the project to solve a problem.
-Quick happy-path examples that show the project in action or outline a
-common use case.
+### Using Docker
 
-> [!Note]
-> If the project does not have a clear usage pattern, consider informing the
-> user as such in the first callout. Then you can skip *Installation* and
-> *Example usage* - perhaps replacing them with a *Quickstart* section -
-> or just moving straight on to *Development*.
-
-Once you have installed the project into a new GitHub repository,
-`git clone` it and `cd` into the created directory.
-
-**For a Python project:**
-
-1. Modify the `pyproject.toml` file, updating the name, description, authors,
-and dependencies as needed.
-2. Update the name of the package from `ocf_template` to your package name.
-3. Install the project in editable mode (in a new virtual environment!)
-with `pip install -e .`.
-
-Also, importantly, update this README!
-
-**For other projects:**
-
-Simply delete `src` and `pyproject.toml`, and just use and update the README
-part of the template as required.
+Build and run locally using Docker:
 
 
-When your project is up and running, add any relevant workflows from OCF's
-template workflows or otherwise. See
-[Choosing and using a workflow template](https://docs.github.com/en/actions/writing-workflows/using-workflow-templates#choosing-and-using-a-workflow-template)
-for more details.
+For development with automatic reload:
 
-*For more information, head to the [Documentation](#documentation).*
+```sh
+$ docker-compose up --build
+```
+
+### Using python(v3.11.x)
+
+Clone the repository and create a new virtual environment with your favorite environment manager.
+Install the dependencies with Poetry:
+
+```bash
+$ poetry install
+```
+
+The service is then runnable via the command:
+```bash
+$ poetry run python -m cloudcasting_backend
+```
+
+You should see the following output:
+
+```shell
+INFO:     Started server process [87312]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+```
+
+The API should then be accessible at `http://localhost:8000`,
+and the docs at `http://localhost:8000/api/docs`.
+
+## API Endpoints
+
+### Cloudcasting Data
+
+- `GET /api/cloudcasting/status` - Get status of cloudcasting data availability
+- `POST /api/cloudcasting/trigger-download` - Trigger background download of latest data  
+- `GET /api/cloudcasting/download-status` - Get current status of background download processes
+- `GET /api/cloudcasting/data-info` - Get detailed information about processed data including timing and metadata
+- `GET /api/cloudcasting/layers` - Get list of available channels and forecast steps
+- `GET /api/cloudcasting/layers/{channel}/{step}.tif` - Download specific GeoTIFF layer
 
 
-## Documentation
+### Data Information Endpoint
 
-Link to the project's documentation, if it exists. Also consider internal
-linking to parts of interest of the documentation, such as **Development**,
-**API**, **Configuration** and so on.
+The `/api/cloudcasting/data-info` endpoint provides comprehensive information about the processed data:
 
+```json
+{
+  "file_exists": true,
+  "init_time": null,
+  "forecast_steps": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+  ],
+  "variables": [
+    "VIS006",
+    "WV_062",
+    "WV_073",
+    "VIS008",
+    "IR_039",
+    "IR_108",
+    "IR_120",
+    "IR_134",
+    "IR_087",
+    "IR_016",
+    "IR_097"
+  ],
+  "file_size_mb": 70.29,
+  "last_modified": "2025-08-26T09:43:26+00:00",
+  "time_range": {
+    "last_processed": "2025-08-26T09:43:26+00:00",
+    "data_source": "S3 download timestamp",
+    "total_forecast_steps": 12,
+    "available_variables": 11
+  },
+  "error": null
+}}
+```
 
-## FAQ
-
-Any major points from github discussions, or highlights from the documentation.
-If the same question is often asked, answer it in here!
-
-### Can I leave this section out?
-
-Yes, this is an optional section.
-
-### Is "How do I run the application" a valid FAQ question?
-
-No, that should be in example usage!
-
-### How should I format the FAQ section?
-
-Like this! Questions in level three headings, answers in plain text.
-
+This endpoint:
+- Reports on processed GeoTIFF layers (not temporary zarr files)
+- Uses timestamps from the data processing pipeline
+- Provides metadata for frontend applications
+- Enables monitoring of data freshness and availability
 
 ## Development
 
-Anything specific to getting set up for development on the project: required libraries,
-infrastructure, extra tools that may be desired ([MyPy](https://mypy.readthedocs.io/en/stable/),
-[pre-commit](https://pre-commit.com/), etc). Also, how to run tests!
+Clone the repository and create a new environment with your favorite environment manager.
+Install all the dependencies including development tools:
 
-Make sure you have the most up to date drivers for your 32 GPU array to use this template! 
+```bash
+$ poetry install
+```
 
-> [!Note]
-> The development section might be contained within the documentation, in which case
-> remove the *Development* section, and instead specify links to the relevant parts
-> of the documentation in the *Documentation* section.
+You can run the service with auto-reload for development:
+```bash
+$ CLOUDCASTING_BACKEND_RELOAD=true poetry run python -m cloudcasting_backend
+```
 
-### Running the test suite
+### Code Quality
 
-The couple of commands, and perhaps additional dependencies, to run the test suite of
-the application or service. 
- 
+This project uses Black for code formatting and pytest for testing.
 
-## Contributing and community
+Install pre-commit hooks:
+```bash
+$ poetry run pre-commit install
+```
 
-[![issues badge](https://img.shields.io/github/issues/openclimatefix/ocf-template?color=FFAC5F)](https://github.com/openclimatefix/ocf-template/issues?q=is%3Aissue+is%3Aopen+sort%3Aupdated-desc)
+Run code formatting:
+```bash
+$ poetry run black cloudcasting_backend tests
+```
 
-- PR's are welcome! See the [Organisation Profile](https://github.com/openclimatefix) for details on contributing
-- Find out about our other projects in the [here](https://github.com/openclimatefix/.github/tree/main/profile)
-- Check out the [OCF blog](https://openclimatefix.org/blog) for updates
-- Follow OCF on [LinkedIn](https://uk.linkedin.com/company/open-climate-fix)
+## Running Tests
 
+Make sure you have the development dependencies installed:
 
-## Contributors
+```bash
+$ poetry install
+```
+
+Then run the tests using pytest:
+```bash
+$ poetry run pytest
+```
+
+For test coverage:
+```bash
+$ poetry run pytest --cov=cloudcasting_backend --cov-report=html
+```
+
+## Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CLOUDCASTING_BACKEND_HOST` | `0.0.0.0` | Server host interface |
+| `CLOUDCASTING_BACKEND_PORT` | `8000` | Server port |
+| `CLOUDCASTING_BACKEND_WORKERS_COUNT` | `1` | Number of worker processes |
+| `CLOUDCASTING_BACKEND_RELOAD` | `false` | Enable auto-reload for development |
+| `CLOUDCASTING_BACKEND_LOG_LEVEL` | `INFO` | Logging level |
+| `CLOUDCASTING_BACKEND_ENVIRONMENT` | `dev` | Environment identifier |
+| `CLOUDCASTING_BACKEND_S3_BUCKET_NAME` | - | **Required**: S3 bucket name |
+| `CLOUDCASTING_BACKEND_S3_REGION_NAME` | - | **Required**: AWS region |
+| `CLOUDCASTING_BACKEND_S3_ACCESS_KEY_ID` | - | **Required**: AWS access key |
+| `CLOUDCASTING_BACKEND_S3_SECRET_ACCESS_KEY` | - | **Required**: AWS secret key |
+| `CLOUDCASTING_BACKEND_SENTRY_DSN` | - | Optional: Sentry error tracking DSN |
+| `AUTH0_DOMAIN` | - | Auth0 domain for JWT authentication |
+| `AUTH0_API_AUDIENCE` | - | Auth0 API audience for JWT validation |
+
+## Known Issues
+
+- Large dataset processing may require significant memory and processing time
+- S3 access requires proper AWS credentials and permissions
+- Some projections may have edge cases in coordinate transformation
+
+## License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## Contributors ✨
+
+Thanks goes to these wonderful people ([emoji key](https://allcontributors.org/docs/en/emoji-key)):
 
 <!-- ALL-CONTRIBUTORS-LIST:START - Do not remove or modify this section -->
 <!-- prettier-ignore-start -->
 <!-- markdownlint-disable -->
+<table>
+  <tbody>
+    <tr>
+      <td align="center" valign="top" width="14.28%"><a href="http://suvanbanerjee.github.io"><img src="https://avatars.githubusercontent.com/u/104707806?v=4?s=100" width="100px;" alt="Suvan Banerjee"/><br /><sub><b>Suvan Banerjee</b></sub></a><br /><a href="https://github.com/openclimatefix/cloudcasting-backend/commits?author=suvanbanerjee" title="Code">💻</a></td>
+    </tr>
+  </tbody>
+</table>
 
 <!-- markdownlint-restore -->
 <!-- prettier-ignore-end -->
 
 <!-- ALL-CONTRIBUTORS-LIST:END -->
+
+This project follows the [all-contributors](https://github.com/all-contributors/all-contributors) specification. Contributions of any kind welcome!
 
 ---
 
