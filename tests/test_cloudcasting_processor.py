@@ -117,7 +117,11 @@ class TestConversionFunctions:
         mock_ds.close = Mock()
 
         mock_open_zarr.return_value = mock_ds
-        mock_extract.return_value = {"longitude": 9.5, "height": 35785831.0}
+        mock_extract.return_value = {
+            "longitude": 9.5,
+            "height": 35785831.0,
+            "platform_name": "Meteosat-11",
+        }
 
         with tempfile.TemporaryDirectory() as temp_dir:
             zarr_path = os.path.join(temp_dir, "test.zarr")
