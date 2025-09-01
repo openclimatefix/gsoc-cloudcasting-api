@@ -1,12 +1,14 @@
 [tool.poetry]
 name = "cloudcasting_backend"
 version = "0.1.0"
-description = ""
+description = "FastAPI backend for cloudcasting quartz app to process and serve cloudcasting prediction data"
 authors = [
-
+    "Brad Fulford <brad@openclimatefix.org>",
+    "Suvan Banerjee <banerjeesuvan@gmail.com>"
 ]
 maintainers = [
-
+    "Brad Fulford <brad@openclimatefix.org>",
+    "Suvan Banerjee <banerjeesuvan@gmail.com>"
 ]
 readme = "README.md"
 
