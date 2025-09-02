@@ -28,9 +28,14 @@ from cloudcasting_backend.settings import settings
 GEOTIFF_STORAGE_PATH = (
     "cloudcasting_backend/static/layers"  # Base directory for all GeoTIFF output
 )
-# Bounding box for cropping the GeoTIFF output [lon_min, lat_min, lon_max, lat_max]
-GEOTIFF_BBOX = [-19.0, 42.0, 15.0, 65.0]
-GEOTIFF_RESOLUTION = 0.075  # Output grid resolution in degrees
+# Bounding box for METEOSAT11
+METEOSAT11_BBOX = [-19.0, 42.0, 15.0, 65.0]
+
+# Bounding box for METEOSAT10
+METEOSAT10_BBOX = [-25.0, 35.0, 25.0, 70.0]
+
+
+GEOTIFF_RESOLUTION = 0.075
 S3_ZARR_PREFIX = (
     "cloudcasting_forecast/latest.zarr/"  # The S3 prefix for the latest forecast
 )
@@ -39,6 +44,16 @@ S3_ZARR_PREFIX = (
 _process_lock = multiprocessing.Lock()
 _current_process: Optional[multiprocessing.Process] = None
 _TIMESTAMP_FILE = Path(GEOTIFF_STORAGE_PATH) / "_last_processed_timestamp.txt"
+
+
+# --- Check if local zarr exixt and server is on dev mode ---
+if (
+    settings.environment == "dev"
+    and Path("cloudcasting_backend/static/data.zarr").exists()
+):
+    LOCAL_MODE = True
+else:
+    LOCAL_MODE = False
 
 
 # ==============================================================================
@@ -123,7 +138,11 @@ def extract_satellite_info(ds: xr.Dataset) -> Dict[str, float]:
         Dictionary with satellite parameters {'longitude': float, 'height': float}.
     """
     # Default values set to Meteosat-11 parameters
-    satellite_info = {"longitude": 9.6, "height": 35785831.0}
+    satellite_info = {
+        "longitude": 9.6,
+        "height": 35785831.0,
+        "platform_name": "Meteosat-11",
+    }
     platform_name = "Unknown"
 
     # Calibration values for Meteosat-10 and Meteosat-11
@@ -135,15 +154,17 @@ def extract_satellite_info(ds: xr.Dataset) -> Dict[str, float]:
         attrs = ds.sat_pred.attrs
         if "platform_name" in attrs:
             platform_name = attrs["platform_name"]
-            log.info(f"📡 Detected satellite platform: {platform_name}")
+            log.info(f"Detected satellite {platform_name}")
 
             if "Meteosat-10" in platform_name:
                 satellite_info["longitude"] = METEOSAT_10_LONGITUDE
                 satellite_info["height"] = SATELLITE_HEIGHT
+                satellite_info["platform_name"] = "Meteosat-10"
                 log.info("Using hard-coded parameters for Meteosat-10.")
             elif "Meteosat-11" in platform_name:
                 satellite_info["longitude"] = METEOSAT_11_LONGITUDE
                 satellite_info["height"] = SATELLITE_HEIGHT
+                satellite_info["platform_name"] = "Meteosat-11"
                 log.info("Using hard-coded parameters for Meteosat-11.")
             else:
                 log.warning(
@@ -217,10 +238,21 @@ def convert_zarr_to_geotiffs(zarr_path: str, output_dir: str) -> None:
     lon_grid, lat_grid = transformer.transform(x_mesh, y_mesh)
     valid_coord_mask = np.isfinite(lon_grid) & np.isfinite(lat_grid)
 
-    lon_out = np.arange(GEOTIFF_BBOX[0], GEOTIFF_BBOX[2], GEOTIFF_RESOLUTION)
-    lat_out = np.arange(GEOTIFF_BBOX[3], GEOTIFF_BBOX[1], -GEOTIFF_RESOLUTION)
-    lon_target, lat_target = np.meshgrid(lon_out, lat_out)
-    log.info(f"Target grid for interpolation created with shape {lon_target.shape}.")
+    if satellite_info["platform_name"] == "Meteosat-10":
+        lon_out = np.arange(METEOSAT10_BBOX[0], METEOSAT10_BBOX[2], GEOTIFF_RESOLUTION)
+        lat_out = np.arange(METEOSAT10_BBOX[3], METEOSAT10_BBOX[1], -GEOTIFF_RESOLUTION)
+        lon_target, lat_target = np.meshgrid(lon_out, lat_out)
+        log.info(
+            f"Target grid for interpolation created with shape {lon_target.shape}."
+        )
+
+    elif satellite_info["platform_name"] == "Meteosat-11":
+        lon_out = np.arange(METEOSAT11_BBOX[0], METEOSAT11_BBOX[2], GEOTIFF_RESOLUTION)
+        lat_out = np.arange(METEOSAT11_BBOX[3], METEOSAT11_BBOX[1], -GEOTIFF_RESOLUTION)
+        lon_target, lat_target = np.meshgrid(lon_out, lat_out)
+        log.info(
+            f"Target grid for interpolation created with shape {lon_target.shape}."
+        )
 
     # --- 2. Iterate through all variables and steps ---
     variables = ds["variable"].values
@@ -392,19 +424,22 @@ def _job_worker(bucket_name: str, s3_prefix: str, geotiff_dir: str) -> None:
 
         # 2. Download to a temporary directory
         with tempfile.TemporaryDirectory() as tmpdir:
-            zarr_local_path = os.path.join(tmpdir, "latest.zarr")
-            downloaded_path = download_s3_folder(
-                bucket_name=bucket_name,
-                s3_folder=s3_prefix,
-                local_dir=zarr_local_path,
-            )
+            if LOCAL_MODE:
+                log.info("Deteced local env")
+                downloaded_path = "cloudcasting_backend/static/data.zarr"
+            else:
+                zarr_local_path = os.path.join(tmpdir, "latest.zarr")
+                downloaded_path = download_s3_folder(
+                    bucket_name=bucket_name,
+                    s3_folder=s3_prefix,
+                    local_dir=zarr_local_path,
+                )
 
             if not downloaded_path:
                 log.error("Download failed. Aborting job.")
                 return
 
             # 3. Convert to GeoTIFFs in the final destination
-            # First, ensure the destination exists
             Path(geotiff_dir).mkdir(parents=True, exist_ok=True)
             convert_zarr_to_geotiffs(downloaded_path, geotiff_dir)
 

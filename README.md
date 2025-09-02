@@ -23,24 +23,25 @@ A FastAPI-based backend service for processing and serving satellite cloud forec
 
 The application is configured via environment variables. For the complete list of environment variables, see the [`.env.example`](.env.example) file.
 
-**Required Environment Variables:**
-```bash
-# S3 Configuration (Required)
-CLOUDCASTING_BACKEND_S3_BUCKET_NAME=your-bucket-name
-CLOUDCASTING_BACKEND_S3_REGION_NAME=us-east-1
-CLOUDCASTING_BACKEND_S3_ACCESS_KEY_ID=your-access-key-id
-CLOUDCASTING_BACKEND_S3_SECRET_ACCESS_KEY=your-secret-access-key
+### Mock data for development
+For development purposes, you can use mock data instead of downloading from S3.
+Make sure that in `cloudcasting_backend/settings.py`, the environment variable is set to `dev`
 
-# Auth0 Configuration
-AUTH0_DOMAIN=your-tenant.auth0.com
-AUTH0_API_AUDIENCE=your-api-audience
+```python
+environment: str = "dev"
 ```
 
-Copy `.env.example` to `.env` and configure the values for your environment:
-```bash
-$ cp .env.example .env
-# Edit .env with your configuration
+You also have to download a test data file and place it in `cloudcasting_backend/static/` directory. which can be found [here](https://drive.google.com/file/d/1B7PtviSsog1BGTTdYdRUpmPveeUU3voH/view?usp=sharing).
+that means your directory structure should look like this:
 ```
+cloudcasting_backend/
+├── static/
+│   └── test_data.zarr/
+│       └── zarr files and directories
+└── ...
+```
+
+Refer to the `.env.example` file for the full list of required and optional environment variables.
 
 ### Using Docker
 
@@ -102,28 +103,11 @@ The `/api/cloudcasting/data-info` endpoint provides comprehensive information ab
   "forecast_steps": [
     0,
     1,
-    2,
-    3,
-    4,
-    5,
-    6,
-    7,
-    8,
-    9,
-    10,
     11
   ],
   "variables": [
     "VIS006",
     "WV_062",
-    "WV_073",
-    "VIS008",
-    "IR_039",
-    "IR_108",
-    "IR_120",
-    "IR_134",
-    "IR_087",
-    "IR_016",
     "IR_097"
   ],
   "file_size_mb": 70.29,
@@ -200,10 +184,10 @@ $ poetry run pytest --cov=cloudcasting_backend --cov-report=html
 | `CLOUDCASTING_BACKEND_RELOAD` | `false` | Enable auto-reload for development |
 | `CLOUDCASTING_BACKEND_LOG_LEVEL` | `INFO` | Logging level |
 | `CLOUDCASTING_BACKEND_ENVIRONMENT` | `dev` | Environment identifier |
-| `CLOUDCASTING_BACKEND_S3_BUCKET_NAME` | - | **Required**: S3 bucket name |
-| `CLOUDCASTING_BACKEND_S3_REGION_NAME` | - | **Required**: AWS region |
-| `CLOUDCASTING_BACKEND_S3_ACCESS_KEY_ID` | - | **Required**: AWS access key |
-| `CLOUDCASTING_BACKEND_S3_SECRET_ACCESS_KEY` | - | **Required**: AWS secret key |
+| `CLOUDCASTING_BACKEND_S3_BUCKET_NAME` | - | S3 bucket name |
+| `CLOUDCASTING_BACKEND_S3_REGION_NAME` | - | AWS region |
+| `CLOUDCASTING_BACKEND_S3_ACCESS_KEY_ID` | - | AWS access key |
+| `CLOUDCASTING_BACKEND_S3_SECRET_ACCESS_KEY` | - | AWS secret key |
 | `CLOUDCASTING_BACKEND_SENTRY_DSN` | - | Optional: Sentry error tracking DSN |
 | `AUTH0_DOMAIN` | - | Auth0 domain for JWT authentication |
 | `AUTH0_API_AUDIENCE` | - | Auth0 API audience for JWT validation |
